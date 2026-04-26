@@ -1,0 +1,28 @@
+orchestrator:
+  runtime: claude-code
+  model: sonnet
+
+runtimes:
+  mock:
+    command: "bash"
+    model_flag: ""
+    prompt_flag: "-c"
+    context_flag: ""
+    workdir: "inherit"
+    models:
+      - test
+
+defaults:
+  runtime: mock
+  model: test
+
+clarification_patterns:
+  - "CLARIFICATION_NEEDED"
+  - "I'm not sure"
+
+clarification_exit_code: 10
+
+event_log: ".baton/events.ndjson"
+task_dir: ".baton/tasks"
+result_dir: ".baton/results"
+spec_dir: ".baton/specs"

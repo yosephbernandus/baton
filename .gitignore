@@ -1,0 +1,13 @@
+# Binary
+baton
+
+# Runtime data
+.baton/tasks/
+.baton/results/
+.baton/events.ndjson
+.baton/locks.yaml
+
+# Keep config and specs in git
+!.baton/agents.yaml
+!.baton/project-brief.md
+!.baton/specs/
