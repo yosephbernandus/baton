@@ -74,6 +74,11 @@ func NewRunCmd() *cobra.Command {
 					return exitError(3, "--prompt requires --skip-validation")
 				}
 				prompt = promptFlag
+				if contextFiles != "" {
+					s = &spec.Spec{
+						ContextFiles: strings.Split(contextFiles, ","),
+					}
+				}
 			}
 
 			taskID := taskIDFlag

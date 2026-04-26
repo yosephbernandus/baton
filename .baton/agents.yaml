@@ -4,6 +4,14 @@ orchestrator:
 
 runtimes:
   mock:
+    command: "./testdata/mock-runtime.sh"
+    model_flag: "-m"
+    prompt_flag: "-p"
+    context_flag: "--files"
+    workdir: "inherit"
+    models:
+      - test
+  bash-mock:
     command: "bash"
     model_flag: ""
     prompt_flag: "-c"
