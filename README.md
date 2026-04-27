@@ -392,6 +392,30 @@ Config files are loaded with precedence: `.baton/agents.yaml` (project) > `~/.ba
 
 See [agents.examples.yaml](agents.examples.yaml) for a complete example.
 
+### OpenCode Configuration
+
+OpenCode requires special configuration because it uses subcommands (`run`) with positional arguments:
+
+```yaml
+runtimes:
+  opencode:
+    command: "opencode"
+    model_flag: "--model"       # Model flag
+    context_flag: "--file"      # Context file flag (singular, not --files)
+    positional:                  # Positional args AFTER the command
+      - "run"
+      - "{{prompt}}"           # Prompt is a positional arg
+    extra_flags:
+      - "--dangerously-skip-permissions"  # Skip permission prompts
+    models:
+      - your-model-here
+```
+
+Key differences from other runtimes:
+- `positional` array places args after the command: `opencode run <prompt>`
+- `--file` (singular) not `--files` (plural) for context files
+- `extra_flags` may include `--dangerously-skip-permissions` for non-interactive use
+
 ## Runtime Data
 
 All runtime state lives in `.baton/` at the project root:

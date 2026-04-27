@@ -1,0 +1,120 @@
+# Baton Task Spec Template
+# Opus writes these during morning planning. Sonnet delegates them during the day.
+# baton validates required fields before spawning the worker.
+#
+# Usage:
+#   baton run --runtime opencode --model kimi --spec this-file.yaml
+
+spec:
+  # REQUIRED: What the worker must produce.
+  what: |
+    Implement user_sessions migration creating the sessions table
+    with support for TTL-based auto-expiry.
+
+  # REQUIRED: Why this task exists. Most important field.
+  # Without it, workers make technically correct but contextually wrong decisions.
+  # Bad:  "We need a migration"
+  # Good: "The cleanup job depends on expires_at to auto-delete expired sessions"
+  why: |
+    Needed for the auto-expiry feature in Phase 2. Sessions must
+    self-clean via TTL. The cleanup job (task-005) depends on the
+    expires_at column existing. Without this migration, the cleanup
+    job has nothing to query against.
+
+  # REQUIRED: What the worker must NOT do. Can be empty but must be present.
+  constraints:
+    - "Use session_v2 schema (has TTL/expires_at field), NOT session_v1"
+    - "Follow the migration pattern in migrations/002_users.go exactly"
+    - "Do NOT modify schema.go -- only create a new migration file"
+    - "Do NOT touch any files in routes/ or handlers/"
+    - "Table name must be user_sessions (plural, matching project convention)"
+
+  # REQUIRED: Files the worker should read for context. Must exist on disk.
+  context_files:
+    - src/schema.go
+    - migrations/002_users.go
+    - docs/phase2-spec.md
+
+  # OPTIONAL: What other tasks are running or completed.
+  # Prevents conflicts and provides cross-task context.
+  related_tasks:
+    - task_id: task-001
+      status: running
+      summary: "Modifying session API handler -- do NOT touch routes/"
+    - task_id: task-003
+      status: completed
+      summary: "Added session model struct"
+      relevant_output: "Session struct is in models/session.go with TTL field"
+
+  # REQUIRED: How the orchestrator verifies the work. At least one item.
+  acceptance_criteria:
+    - "Migration file created at migrations/003_user_sessions.go"
+    - "Creates user_sessions table with columns: id, user_id, token, created_at, expires_at"
+    - "id is ULID primary key"
+    - "user_id is foreign key to users table"
+    - "token has unique index"
+    - "Composite index on (user_id, expires_at) for cleanup queries"
+    - "go build passes with no errors"
+
+  # OPTIONAL: Decisions already made. Prevents workers from re-litigating.
+  # Especially important for decisions from human escalation.
+  decisions:
+    - question: "session_v1 or session_v2?"
+      answer: "v2"
+      reason: "TTL field required for auto-expiry feature"
+      decided_by: human
+    - question: "ULID or UUID for primary key?"
+      answer: "ULID"
+      reason: "Project standard per ARCHITECTURE.md"
+      decided_by: orchestrator
+
+  # OPTIONAL: Files this task will create or modify.
+  # Used by baton's file lock registry to prevent parallel conflicts.
+  # Use trailing slash for directory-level locks (e.g. migrations/).
+  writes_to:
+    - migrations/003_user_sessions.go
+    - models/session.go
+
+  # OPTIONAL: Concrete code examples for the worker to mimic.
+  # Workers are better at mimicry than interpretation.
+  # Extract relevant snippets from referenced files.
+  examples:
+    - description: "Migration function pattern to follow"
+      code: |
+        func Migrate003(db *sql.DB) error {
+            _, err := db.Exec(`
+                CREATE TABLE user_sessions (
+                    -- worker fills in columns here
+                );
+            `)
+            return err
+        }
+    - description: "Index creation pattern"
+      code: |
+        _, err = db.Exec(`
+            CREATE INDEX idx_user_sessions_user_id
+            ON user_sessions (user_id);
+        `)
+
+  # OPTIONAL: Automated checks baton runs after worker exits.
+  # Catches obvious failures before orchestrator reviews.
+  # Each check is a shell command with expected exit code.
+  acceptance_checks:
+    - command: "go build ./..."
+      expect_exit: 0
+      description: "Code must compile"
+    - command: "test -f migrations/003_user_sessions.go"
+      expect_exit: 0
+      description: "Migration file must exist"
+    - command: "grep -q 'expires_at' migrations/003_user_sessions.go"
+      expect_exit: 0
+      description: "Must include expires_at column"
+    - command: "grep -q 'idx_.*user_id' migrations/003_user_sessions.go"
+      expect_exit: 0
+      description: "Must include user_id index"
+
+  # OPTIONAL: Risk level. Determines review depth.
+  # low:    Sonnet reviews only
+  # medium: Sonnet reviews, included in coherence checkpoints
+  # high:   Flagged for Opus review before other tasks build on it
+  criticality: medium
