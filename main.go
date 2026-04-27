@@ -22,6 +22,7 @@ func main() {
 		cmd.NewStatusCmd(),
 		cmd.NewListCmd(),
 		cmd.NewResultCmd(),
+		cmd.NewMonitorCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
