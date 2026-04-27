@@ -11,8 +11,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/yosephbernandus/baton/internal/brief"
 	"github.com/yosephbernandus/baton/internal/config"
+	"github.com/yosephbernandus/baton/internal/cost"
+	"github.com/yosephbernandus/baton/internal/decisions"
 	"github.com/yosephbernandus/baton/internal/events"
 	"github.com/yosephbernandus/baton/internal/lock"
+	"github.com/yosephbernandus/baton/internal/routing"
 	"github.com/yosephbernandus/baton/internal/runner"
 	"github.com/yosephbernandus/baton/internal/spec"
 	"github.com/yosephbernandus/baton/internal/task"
@@ -29,6 +32,7 @@ func NewRunCmd() *cobra.Command {
 		skipValidation bool
 		timeoutFlag    string
 		jsonOutput     bool
+		autoRoute      bool
 	)
 
 	cmd := &cobra.Command{
@@ -40,11 +44,6 @@ func NewRunCmd() *cobra.Command {
 			cfg, err := config.LoadConfig()
 			if err != nil {
 				return exitError(2, "config error: %v", err)
-			}
-
-			runtimeName, model := cfg.ResolveRuntime(runtimeFlag, modelFlag)
-			if err := cfg.ValidateRuntime(runtimeName, model); err != nil {
-				return exitError(2, "%v", err)
 			}
 
 			if specFlag == "" && promptFlag == "" {
@@ -82,6 +81,25 @@ func NewRunCmd() *cobra.Command {
 						ContextFiles: strings.Split(contextFiles, ","),
 					}
 				}
+			}
+
+			runtimeName, model := cfg.ResolveRuntime(runtimeFlag, modelFlag)
+
+			if autoRoute && s != nil && runtimeFlag == "" && modelFlag == "" {
+				res := routing.Resolve(cfg, s)
+				runtimeName = res.Runtime
+				model = res.Model
+				emitter, _ := events.NewEmitter(cfg.EventLog)
+				if emitter != nil {
+					emitter.TaskEvent("", runtimeName, model, "", "route_resolved", map[string]interface{}{
+						"action": res.Action,
+						"reason": res.Reason,
+					})
+				}
+			}
+
+			if err := cfg.ValidateRuntime(runtimeName, model); err != nil {
+				return exitError(2, "%v", err)
 			}
 
 			taskID := taskIDFlag
@@ -185,6 +203,34 @@ func NewRunCmd() *cobra.Command {
 			}
 			store.Update(t)
 
+			if tracker, err := cost.NewTracker(cfg.ResultDir); err == nil {
+				tracker.Record(cost.Entry{
+					TaskID:   taskID,
+					Runtime:  runtimeName,
+					Model:    model,
+					Duration: result.Duration,
+					Status:   result.Status,
+				})
+			}
+
+			if s != nil && len(s.Decisions) > 0 {
+				if dstore, err := decisions.NewStore(cfg.ResultDir); err == nil {
+					now := time.Now().UTC()
+					var records []decisions.Record
+					for _, d := range s.Decisions {
+						records = append(records, decisions.Record{
+							TaskID:    taskID,
+							Question:  d.Question,
+							Answer:    d.Answer,
+							Reason:    d.Reason,
+							DecidedBy: d.DecidedBy,
+							Timestamp: now,
+						})
+					}
+					dstore.Append(records...)
+				}
+			}
+
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
@@ -225,6 +271,7 @@ func NewRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&skipValidation, "skip-validation", false, "skip spec validation")
 	cmd.Flags().StringVar(&timeoutFlag, "timeout", "10m", "max time before killing worker")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output task record as JSON")
+	cmd.Flags().BoolVar(&autoRoute, "auto-route", false, "auto-select runtime/model from routing rules")
 
 	return cmd
 }

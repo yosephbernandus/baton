@@ -24,6 +24,7 @@ func main() {
 		cmd.NewResultCmd(),
 		cmd.NewMonitorCmd(),
 		cmd.NewConfigCmd(),
+		cmd.NewCostCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
