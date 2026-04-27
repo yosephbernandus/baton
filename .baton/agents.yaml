@@ -19,6 +19,14 @@ runtimes:
     workdir: "inherit"
     models:
       - test
+  slow-mock:
+    command: "./testdata/mock-slow.sh"
+    model_flag: "-m"
+    prompt_flag: "-p"
+    context_flag: ""
+    workdir: "inherit"
+    models:
+      - test
 
 defaults:
   runtime: mock

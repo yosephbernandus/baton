@@ -11,6 +11,7 @@ import (
 	"github.com/yosephbernandus/baton/internal/brief"
 	"github.com/yosephbernandus/baton/internal/config"
 	"github.com/yosephbernandus/baton/internal/events"
+	"github.com/yosephbernandus/baton/internal/lock"
 	"github.com/yosephbernandus/baton/internal/runner"
 	"github.com/yosephbernandus/baton/internal/spec"
 	"github.com/yosephbernandus/baton/internal/task"
@@ -125,12 +126,41 @@ func NewRunCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 
+			lockReg := lock.NewRegistry(cfg.LockFile)
+			if s != nil && len(s.WritesTo) > 0 {
+				conflicts, err := lockReg.Check(s.WritesTo)
+				if err != nil {
+					return exitError(1, "checking locks: %v", err)
+				}
+				if len(conflicts) > 0 {
+					var msgs []string
+					for _, c := range conflicts {
+						msgs = append(msgs, c.String())
+					}
+					return exitError(4, "lock conflict: %s", strings.Join(msgs, "; "))
+				}
+				if err := lockReg.Acquire(taskID, s.WritesTo); err != nil {
+					return exitError(4, "acquiring locks: %v", err)
+				}
+				emitter.TaskEvent(taskID, runtimeName, model, "", "lock_acquired", map[string]interface{}{
+					"paths": s.WritesTo,
+				})
+			}
+
 			t.Status = "running"
 			t.StartedAt = &now
 			store.Update(t)
 
 			r := runner.New(cfg, emitter, store)
 			result, err := r.Run(ctx, taskID, runtimeName, model, prompt, s, timeout)
+
+			if s != nil && len(s.WritesTo) > 0 {
+				lockReg.Release(taskID)
+				emitter.TaskEvent(taskID, runtimeName, model, "", "lock_released", map[string]interface{}{
+					"paths": s.WritesTo,
+				})
+			}
+
 			if err != nil {
 				t.Status = "failed"
 				t.Error = err.Error()
