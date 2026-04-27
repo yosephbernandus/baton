@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 	"github.com/yosephbernandus/baton/internal/config"
+	"github.com/yosephbernandus/baton/internal/task"
 	"github.com/yosephbernandus/baton/internal/tui"
 )
 
@@ -25,6 +26,21 @@ func NewMonitorCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("starting monitor: %w", err)
 			}
+
+			store, err := task.NewStore(cfg.TaskDir)
+			if err != nil {
+				return fmt.Errorf("creating task store: %w", err)
+			}
+			killCh := make(chan string, 1)
+			model.SetKillChannel(killCh)
+
+			go func() {
+				for taskID := range killCh {
+					if err := store.KillTask(taskID); err != nil {
+						fmt.Fprintf(cmd.OutOrStderr(), "kill error: %v\n", err)
+					}
+				}
+			}()
 
 			p := tea.NewProgram(model, tea.WithAltScreen())
 			if _, err := p.Run(); err != nil {

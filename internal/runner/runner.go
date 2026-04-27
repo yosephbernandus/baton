@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/yosephbernandus/baton/internal/config"
@@ -26,13 +28,15 @@ type Result struct {
 }
 
 type Runner struct {
-	cfg     *config.Config
-	emitter *events.Emitter
-	store   *task.Store
+	cfg      *config.Config
+	emitter  *events.Emitter
+	store    *task.Store
+	mu       sync.RWMutex
+	procs    map[string]*exec.Cmd
 }
 
 func New(cfg *config.Config, emitter *events.Emitter, store *task.Store) *Runner {
-	return &Runner{cfg: cfg, emitter: emitter, store: store}
+	return &Runner{cfg: cfg, emitter: emitter, store: store, procs: make(map[string]*exec.Cmd)}
 }
 
 func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt string, s *spec.Spec, timeout time.Duration) (*Result, error) {
@@ -59,6 +63,17 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("starting worker: %w", err)
+	}
+
+	r.mu.Lock()
+	r.procs[taskID] = cmd
+	r.mu.Unlock()
+
+	if cmd.Process != nil {
+		if t, err := r.store.Get(taskID); err == nil {
+			t.PID = cmd.Process.Pid
+			_ = r.store.Update(t)
+		}
 	}
 
 	var output []string
@@ -125,6 +140,10 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		"duration":  duration.Round(time.Second).String(),
 	})
 
+	r.mu.Lock()
+	delete(r.procs, taskID)
+	r.mu.Unlock()
+
 	return &Result{
 		Status:        status,
 		ExitCode:      exitCode,
@@ -133,6 +152,23 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		FilesChanged:  filesChanged,
 		Duration:      duration,
 	}, nil
+}
+
+func (r *Runner) KillTask(taskID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	cmd, ok := r.procs[taskID]
+	if !ok {
+		return fmt.Errorf("task %s not found or not running", taskID)
+	}
+
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("sending SIGTERM to task %s: %w", taskID, err)
+	}
+
+	delete(r.procs, taskID)
+	return nil
 }
 
 func buildArgs(rt *config.RuntimeConfig, model, prompt string, s *spec.Spec) []string {

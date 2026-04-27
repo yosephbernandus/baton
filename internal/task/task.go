@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/yosephbernandus/baton/internal/spec"
@@ -110,6 +111,26 @@ func (s *Store) AddAttempt(id string, a Attempt) error {
 		return err
 	}
 	t.Attempts = append(t.Attempts, a)
+	return s.Update(t)
+}
+
+func (s *Store) KillTask(id string) error {
+	t, err := s.Get(id)
+	if err != nil {
+		return err
+	}
+
+	if t.PID <= 0 {
+		return fmt.Errorf("task %s has no PID recorded", id)
+	}
+
+	if err := syscall.Kill(t.PID, syscall.SIGTERM); err != nil {
+		return fmt.Errorf("killing PID %d: %w", t.PID, err)
+	}
+
+	t.Status = "killed"
+	now := time.Now().UTC()
+	t.CompletedAt = &now
 	return s.Update(t)
 }
 
