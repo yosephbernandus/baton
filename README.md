@@ -4,7 +4,7 @@ Runtime-agnostic multi-agent orchestrator. Single Go binary. Delegates coding ta
 
 ## Why
 
-AI coding agents are powerful but siloed. Claude Code only talks to Anthropic models. OpenCode only talks to its ecosystem. When you want Opus to plan, Sonnet to orchestrate, and cheap models (Kimi, DeepSeek) to write code — there's no bridge.
+AI coding agents are powerful but siloed. Claude Code only talks to Anthropic models. OpenCode only talks to its ecosystem. When you want Opus to plan, Sonnet to orchestrate, and cheap models (Kimi, DeepSeek) to write code there's no bridge.
 
 Baton is that bridge. It doesn't plan, reason, or make decisions. It dispatches structured tasks to external runtimes and tracks what happens.
 
