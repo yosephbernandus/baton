@@ -11,4 +11,3 @@ linters:
     - unused
     - ineffassign
     - gocritic
-    - gosimple
