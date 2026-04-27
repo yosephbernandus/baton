@@ -13,8 +13,8 @@ linters:
     - gocritic
     - gosimple
 
-issues:
-  exclude-rules:
+exclusions:
+  rules:
     - path: _test\.go
       linters:
         - errcheck
