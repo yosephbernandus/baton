@@ -50,12 +50,12 @@ func TestStore_Update(t *testing.T) {
 		Status:    "running",
 		CreatedAt: time.Now().UTC(),
 	}
-	store.Create(task)
+	_ = store.Create(task)
 
 	task.Status = "completed"
 	exitCode := 0
 	task.ExitCode = &exitCode
-	store.Update(task)
+	_ = store.Update(task)
 
 	got, _ := store.Get("task-002")
 	if got.Status != "completed" {
@@ -71,9 +71,9 @@ func TestStore_List(t *testing.T) {
 	store, _ := NewStore(dir)
 
 	now := time.Now().UTC()
-	store.Create(&Task{ID: "t1", Status: "completed", CreatedAt: now})
-	store.Create(&Task{ID: "t2", Status: "failed", CreatedAt: now})
-	store.Create(&Task{ID: "t3", Status: "completed", CreatedAt: now})
+	_ = store.Create(&Task{ID: "t1", Status: "completed", CreatedAt: now})
+	_ = store.Create(&Task{ID: "t2", Status: "failed", CreatedAt: now})
+	_ = store.Create(&Task{ID: "t3", Status: "completed", CreatedAt: now})
 
 	all, _ := store.List("")
 	if len(all) != 3 {
@@ -106,14 +106,14 @@ func TestStore_AddAttempt(t *testing.T) {
 	store, _ := NewStore(dir)
 
 	now := time.Now().UTC()
-	store.Create(&Task{
+	_ = store.Create(&Task{
 		ID:        "task-retry",
 		Status:    "needs_clarification",
 		CreatedAt: now,
 		Attempts:  []Attempt{{Attempt: 1, StartedAt: now, Status: "needs_clarification"}},
 	})
 
-	store.AddAttempt("task-retry", Attempt{
+	_ = store.AddAttempt("task-retry", Attempt{
 		Attempt:   2,
 		StartedAt: time.Now().UTC(),
 		Status:    "running",
@@ -135,10 +135,10 @@ func TestStore_CleanStale(t *testing.T) {
 	old := time.Now().UTC().Add(-2 * time.Hour)
 	recent := time.Now().UTC().Add(-5 * time.Minute)
 
-	store.Create(&Task{ID: "stale-running", Status: "running", CreatedAt: old})
-	store.Create(&Task{ID: "stale-pending", Status: "pending", CreatedAt: old})
-	store.Create(&Task{ID: "fresh-running", Status: "running", CreatedAt: recent})
-	store.Create(&Task{ID: "old-completed", Status: "completed", CreatedAt: old})
+	_ = store.Create(&Task{ID: "stale-running", Status: "running", CreatedAt: old})
+	_ = store.Create(&Task{ID: "stale-pending", Status: "pending", CreatedAt: old})
+	_ = store.Create(&Task{ID: "fresh-running", Status: "running", CreatedAt: recent})
+	_ = store.Create(&Task{ID: "old-completed", Status: "completed", CreatedAt: old})
 
 	cleaned, err := store.CleanStale(1 * time.Hour)
 	if err != nil {

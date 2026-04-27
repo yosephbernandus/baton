@@ -27,7 +27,7 @@ func setupGitRepo(t *testing.T) string {
 	}
 
 	run("init")
-	os.WriteFile(filepath.Join(dir, "initial.txt"), []byte("hello"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "initial.txt"), []byte("hello"), 0o644)
 	run("add", ".")
 	run("commit", "-m", "initial")
 
@@ -101,8 +101,10 @@ func TestTakeSnapshot_InGitRepo(t *testing.T) {
 	dir := setupGitRepo(t)
 
 	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
 
 	snap, err := TakeSnapshot()
 	if err != nil {
@@ -115,8 +117,8 @@ func TestTakeSnapshot_InGitRepo(t *testing.T) {
 		t.Errorf("expected 0 modified, got %d", len(snap.Modified))
 	}
 
-	os.WriteFile(filepath.Join(dir, "initial.txt"), []byte("modified"), 0o644)
-	os.WriteFile(filepath.Join(dir, "newfile.txt"), []byte("new"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "initial.txt"), []byte("modified"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "newfile.txt"), []byte("new"), 0o644)
 
 	snap2, err := TakeSnapshot()
 	if err != nil {

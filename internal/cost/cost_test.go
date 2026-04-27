@@ -41,21 +41,21 @@ func TestTracker_RecordAndSummarize(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tracker.Record(Entry{
+	_ = tracker.Record(Entry{
 		TaskID:   "t1",
 		Runtime:  "opencode",
 		Model:    "kimi",
 		Duration: 3 * time.Minute,
 		Status:   "completed",
 	})
-	tracker.Record(Entry{
+	_ = tracker.Record(Entry{
 		TaskID:   "t2",
 		Runtime:  "opencode",
 		Model:    "deepseek",
 		Duration: 5 * time.Minute,
 		Status:   "completed",
 	})
-	tracker.Record(Entry{
+	_ = tracker.Record(Entry{
 		TaskID:   "t3",
 		Runtime:  "aider",
 		Model:    "gpt-4o",

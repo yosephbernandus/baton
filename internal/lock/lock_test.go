@@ -43,7 +43,7 @@ func TestAcquireAndRelease(t *testing.T) {
 
 func TestConflictDetection(t *testing.T) {
 	reg := newTestRegistry(t)
-	reg.Acquire("task-001", []string{"models/session.go"})
+	_ = reg.Acquire("task-001", []string{"models/session.go"})
 
 	err := reg.Acquire("task-002", []string{"models/session.go"})
 	if err == nil {
@@ -61,7 +61,7 @@ func TestConflictDetection(t *testing.T) {
 
 func TestPrefixLockConflict(t *testing.T) {
 	reg := newTestRegistry(t)
-	reg.Acquire("task-001", []string{"migrations/"})
+	_ = reg.Acquire("task-001", []string{"migrations/"})
 
 	err := reg.Acquire("task-002", []string{"migrations/003_users.go"})
 	if err == nil {
@@ -76,7 +76,7 @@ func TestPrefixLockConflict(t *testing.T) {
 
 func TestReversePrefixConflict(t *testing.T) {
 	reg := newTestRegistry(t)
-	reg.Acquire("task-001", []string{"migrations/003_users.go"})
+	_ = reg.Acquire("task-001", []string{"migrations/003_users.go"})
 
 	err := reg.Acquire("task-002", []string{"migrations/"})
 	if err == nil {
@@ -86,7 +86,7 @@ func TestReversePrefixConflict(t *testing.T) {
 
 func TestNoConflict(t *testing.T) {
 	reg := newTestRegistry(t)
-	reg.Acquire("task-001", []string{"models/session.go"})
+	_ = reg.Acquire("task-001", []string{"models/session.go"})
 
 	err := reg.Acquire("task-002", []string{"models/user.go"})
 	if err != nil {
@@ -101,7 +101,7 @@ func TestNoConflict(t *testing.T) {
 
 func TestAtomicAcquire(t *testing.T) {
 	reg := newTestRegistry(t)
-	reg.Acquire("task-001", []string{"file-a.go"})
+	_ = reg.Acquire("task-001", []string{"file-a.go"})
 
 	err := reg.Acquire("task-002", []string{"file-b.go", "file-a.go"})
 	if err == nil {
@@ -116,10 +116,10 @@ func TestAtomicAcquire(t *testing.T) {
 
 func TestCleanStale(t *testing.T) {
 	reg := newTestRegistry(t)
-	reg.Acquire("task-alive", []string{"file-a.go"})
-	reg.Acquire("task-dead", []string{"file-b.go"})
+	_ = reg.Acquire("task-alive", []string{"file-a.go"})
+	_ = reg.Acquire("task-dead", []string{"file-b.go"})
 
-	reg.CleanStale(func(taskID string) bool {
+	_ = reg.CleanStale(func(taskID string) bool {
 		return taskID == "task-alive"
 	})
 

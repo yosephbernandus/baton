@@ -36,20 +36,20 @@ func (t *Tailer) Tail(ctx context.Context) (<-chan Event, error) {
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
 
 	if err := watcher.Add(t.path); err != nil {
-		f.Close()
-		watcher.Close()
+		_ = f.Close()
+		_ = watcher.Close()
 		return nil, err
 	}
 
 	go func() {
 		defer close(ch)
-		defer f.Close()
-		defer watcher.Close()
+		defer f.Close()         //nolint:errcheck
+		defer watcher.Close()   //nolint:errcheck
 
 		reader := bufio.NewReader(f)
 

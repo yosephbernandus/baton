@@ -44,7 +44,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 
 	cmd := r.buildCommand(ctx, &rt, model, prompt, s)
 
-	r.emitter.TaskEvent(taskID, runtimeName, model, r.cfg.Orchestrator.Runtime+"/"+r.cfg.Orchestrator.Model, "task_started", map[string]interface{}{
+	_ = r.emitter.TaskEvent(taskID, runtimeName, model, r.cfg.Orchestrator.Runtime+"/"+r.cfg.Orchestrator.Model, "task_started", map[string]interface{}{
 		"attempt": 1,
 	})
 
@@ -69,7 +69,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		line := scanner.Text()
 		output = append(output, line)
 
-		r.emitter.TaskEvent(taskID, runtimeName, model, "", "output", map[string]interface{}{
+		_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "output", map[string]interface{}{
 			"stream": "stdout",
 			"line":   line,
 		})
@@ -111,7 +111,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 	if beforeSnap != nil && afterSnap != nil {
 		filesChanged = gitpkg.DetectChanges(beforeSnap, afterSnap)
 		for _, f := range filesChanged {
-			r.emitter.TaskEvent(taskID, runtimeName, model, "", "file_changed", map[string]interface{}{
+			_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "file_changed", map[string]interface{}{
 				"path": f,
 			})
 		}
@@ -121,7 +121,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 	if status == "needs_clarification" {
 		eventType = "needs_clarification"
 	}
-	r.emitter.TaskEvent(taskID, runtimeName, model, "", eventType, map[string]interface{}{
+	_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", eventType, map[string]interface{}{
 		"exit_code": exitCode,
 		"duration":  duration.Round(time.Second).String(),
 	})
@@ -191,12 +191,12 @@ func (r *Runner) runAcceptanceChecks(taskID, runtimeName, model string, checks [
 		}
 
 		if exitCode == check.ExpectExit {
-			r.emitter.TaskEvent(taskID, runtimeName, model, "", "acceptance_check_passed", map[string]interface{}{
+			_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "acceptance_check_passed", map[string]interface{}{
 				"command":     check.Command,
 				"description": check.Description,
 			})
 		} else {
-			r.emitter.TaskEvent(taskID, runtimeName, model, "", "acceptance_check_failed", map[string]interface{}{
+			_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "acceptance_check_failed", map[string]interface{}{
 				"command":     check.Command,
 				"description": check.Description,
 				"expected":    check.ExpectExit,

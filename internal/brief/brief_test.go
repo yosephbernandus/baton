@@ -9,7 +9,9 @@ import (
 func TestLoad_Exists(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "brief.md")
-	os.WriteFile(path, []byte("Project: Test\nLanguage: Go"), 0o644)
+	if err := os.WriteFile(path, []byte("Project: Test\nLanguage: Go"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	result := Load(path)
 	if result != "Project: Test\nLanguage: Go" {

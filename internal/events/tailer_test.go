@@ -13,9 +13,9 @@ func TestTailer_ReadAll(t *testing.T) {
 	logPath := filepath.Join(dir, "events.ndjson")
 
 	emitter, _ := NewEmitter(logPath)
-	emitter.Emit(Event{TaskID: "t1", EventType: "task_created"})
-	emitter.Emit(Event{TaskID: "t1", EventType: "task_started"})
-	emitter.Emit(Event{TaskID: "t1", EventType: "task_completed"})
+	_ = emitter.Emit(Event{TaskID: "t1", EventType: "task_created"})
+	_ = emitter.Emit(Event{TaskID: "t1", EventType: "task_started"})
+	_ = emitter.Emit(Event{TaskID: "t1", EventType: "task_completed"})
 
 	tailer := NewTailer(logPath)
 	events, err := tailer.ReadAll()
@@ -48,7 +48,7 @@ func TestTailer_ReadAllEmpty(t *testing.T) {
 func TestTailer_Tail(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "events.ndjson")
-	os.WriteFile(logPath, []byte{}, 0o644)
+	_ = os.WriteFile(logPath, []byte{}, 0o644)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -62,8 +62,8 @@ func TestTailer_Tail(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	emitter, _ := NewEmitter(logPath)
-	emitter.Emit(Event{TaskID: "t1", EventType: "task_created"})
-	emitter.Emit(Event{TaskID: "t1", EventType: "task_completed"})
+	_ = emitter.Emit(Event{TaskID: "t1", EventType: "task_created"})
+	_ = emitter.Emit(Event{TaskID: "t1", EventType: "task_completed"})
 
 	var received []Event
 	timeout := time.After(2 * time.Second)

@@ -60,7 +60,7 @@ func TestEmitter_MultipleEvents(t *testing.T) {
 	emitter, _ := NewEmitter(logPath)
 
 	for i := 0; i < 5; i++ {
-		emitter.Emit(Event{
+		_ = emitter.Emit(Event{
 			TaskID:    "task-001",
 			EventType: "output",
 			Data:      map[string]interface{}{"line": "test"},
@@ -86,7 +86,7 @@ func TestTaskEvent(t *testing.T) {
 
 	data, _ := os.ReadFile(logPath)
 	var ev Event
-	json.Unmarshal([]byte(strings.TrimSpace(string(data))), &ev)
+	_ = json.Unmarshal([]byte(strings.TrimSpace(string(data))), &ev)
 
 	if ev.DispatchedBy != "claude-code/sonnet" {
 		t.Errorf("expected dispatched_by claude-code/sonnet, got %s", ev.DispatchedBy)
@@ -107,7 +107,7 @@ func TestEmitter_Rotation(t *testing.T) {
 	bigData["payload"] = strings.Repeat("x", 512)
 
 	for i := 0; i < 5; i++ {
-		emitter.Emit(Event{TaskID: "t1", EventType: "output", Data: bigData})
+		_ = emitter.Emit(Event{TaskID: "t1", EventType: "output", Data: bigData})
 	}
 
 	if _, err := os.Stat(logPath + ".1"); os.IsNotExist(err) {

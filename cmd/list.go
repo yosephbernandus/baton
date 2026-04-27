@@ -45,13 +45,13 @@ func NewListCmd() *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-			fmt.Fprintln(w, "RUNTIME\tMODELS\tSTATUS")
+			_, _ = fmt.Fprintln(w, "RUNTIME\tMODELS\tSTATUS")
 			for _, r := range runtimes {
 				status := "available"
 				if !r.Available {
 					status = "not found"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\n", r.Name, strings.Join(r.Models, ", "), status)
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", r.Name, strings.Join(r.Models, ", "), status)
 			}
 			return w.Flush()
 		},

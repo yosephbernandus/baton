@@ -48,9 +48,9 @@ func NewCostCmd() *cobra.Command {
 				fmt.Println("By model:")
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 				for model, est := range summary.ByModel {
-					fmt.Fprintf(w, "  %s\t$%.4f\n", model, est)
+					_, _ = fmt.Fprintf(w, "  %s\t$%.4f\n", model, est)
 				}
-				w.Flush()
+				_ = w.Flush()
 				fmt.Println()
 			}
 
@@ -58,9 +58,9 @@ func NewCostCmd() *cobra.Command {
 				fmt.Println("By runtime:")
 				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 				for rt, est := range summary.ByRuntime {
-					fmt.Fprintf(w, "  %s\t$%.4f\n", rt, est)
+					_, _ = fmt.Fprintf(w, "  %s\t$%.4f\n", rt, est)
 				}
-				w.Flush()
+				_ = w.Flush()
 				fmt.Println()
 			}
 

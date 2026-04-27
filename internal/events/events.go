@@ -60,7 +60,7 @@ func (e *Emitter) Emit(ev Event) error {
 	if err != nil {
 		return fmt.Errorf("opening event log: %w", err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	_, err = f.Write(line)
 	if err != nil {
@@ -69,7 +69,7 @@ func (e *Emitter) Emit(ev Event) error {
 
 	info, err := f.Stat()
 	if err == nil && e.maxSizeBytes > 0 && info.Size() > e.maxSizeBytes {
-		f.Close()
+		_ = f.Close()
 		e.rotate()
 		return nil
 	}
@@ -81,13 +81,13 @@ func (e *Emitter) rotate() {
 	for i := e.keepCount - 1; i >= 1; i-- {
 		old := fmt.Sprintf("%s.%d", e.path, i)
 		new := fmt.Sprintf("%s.%d", e.path, i+1)
-		os.Rename(old, new)
+		_ = os.Rename(old, new)
 	}
-	os.Rename(e.path, e.path+".1")
+	_ = os.Rename(e.path, e.path+".1")
 
 	if e.keepCount > 0 {
 		remove := fmt.Sprintf("%s.%d", e.path, e.keepCount+1)
-		os.Remove(remove)
+		_ = os.Remove(remove)
 	}
 }
 

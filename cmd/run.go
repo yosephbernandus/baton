@@ -91,7 +91,7 @@ func NewRunCmd() *cobra.Command {
 				model = res.Model
 				emitter, _ := events.NewEmitter(cfg.EventLog)
 				if emitter != nil {
-					emitter.TaskEvent("", runtimeName, model, "", "route_resolved", map[string]interface{}{
+					_ = emitter.TaskEvent("", runtimeName, model, "", "route_resolved", map[string]interface{}{
 						"action": res.Action,
 						"reason": res.Reason,
 					})
@@ -135,7 +135,7 @@ func NewRunCmd() *cobra.Command {
 				return exitError(1, "creating task record: %v", err)
 			}
 
-			emitter.TaskEvent(taskID, runtimeName, model, t.DispatchedBy, "task_created", map[string]interface{}{
+			_ = emitter.TaskEvent(taskID, runtimeName, model, t.DispatchedBy, "task_created", map[string]interface{}{
 				"spec_summary": truncate(strings.TrimSpace(prompt), 200),
 			})
 
@@ -162,21 +162,21 @@ func NewRunCmd() *cobra.Command {
 				if err := lockReg.Acquire(taskID, s.WritesTo); err != nil {
 					return exitError(4, "acquiring locks: %v", err)
 				}
-				emitter.TaskEvent(taskID, runtimeName, model, "", "lock_acquired", map[string]interface{}{
+				_ = emitter.TaskEvent(taskID, runtimeName, model, "", "lock_acquired", map[string]interface{}{
 					"paths": s.WritesTo,
 				})
 			}
 
 			t.Status = "running"
 			t.StartedAt = &now
-			store.Update(t)
+			_ = store.Update(t)
 
 			r := runner.New(cfg, emitter, store)
 			result, err := r.Run(ctx, taskID, runtimeName, model, prompt, s, timeout)
 
 			if s != nil && len(s.WritesTo) > 0 {
-				lockReg.Release(taskID)
-				emitter.TaskEvent(taskID, runtimeName, model, "", "lock_released", map[string]interface{}{
+				_ = lockReg.Release(taskID)
+				_ = emitter.TaskEvent(taskID, runtimeName, model, "", "lock_released", map[string]interface{}{
 					"paths": s.WritesTo,
 				})
 			}
@@ -184,7 +184,7 @@ func NewRunCmd() *cobra.Command {
 			if err != nil {
 				t.Status = "failed"
 				t.Error = err.Error()
-				store.Update(t)
+				_ = store.Update(t)
 				return exitError(1, "runner error: %v", err)
 			}
 
@@ -201,10 +201,10 @@ func NewRunCmd() *cobra.Command {
 				t.Attempts[0].CompletedAt = &completedAt
 				t.Attempts[0].Status = result.Status
 			}
-			store.Update(t)
+			_ = store.Update(t)
 
 			if tracker, err := cost.NewTracker(cfg.ResultDir); err == nil {
-				tracker.Record(cost.Entry{
+				_ = tracker.Record(cost.Entry{
 					TaskID:   taskID,
 					Runtime:  runtimeName,
 					Model:    model,
@@ -227,20 +227,20 @@ func NewRunCmd() *cobra.Command {
 							Timestamp: now,
 						})
 					}
-					dstore.Append(records...)
+					_ = dstore.Append(records...)
 				}
 			}
 
 			if jsonOutput {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
-				enc.Encode(t)
+				_ = enc.Encode(t)
 			}
 
 			switch result.Status {
 			case "completed":
 				if !jsonOutput {
-					fmt.Fprintf(os.Stdout, "task %s completed in %s\n", taskID, t.Duration)
+					_, _ = fmt.Fprintf(os.Stdout, "task %s completed in %s\n", taskID, t.Duration)
 				}
 				return nil
 			case "failed":
@@ -251,7 +251,7 @@ func NewRunCmd() *cobra.Command {
 				return exitError(1, "%s", msg)
 			case "needs_clarification":
 				if !jsonOutput {
-					fmt.Fprintf(os.Stdout, "task %s needs clarification: %s\n", taskID, result.Clarification)
+					_, _ = fmt.Fprintf(os.Stdout, "task %s needs clarification: %s\n", taskID, result.Clarification)
 				}
 				return exitError(10, "")
 			case "timeout":

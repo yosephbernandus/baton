@@ -42,14 +42,18 @@ func TestSetNestedValue(t *testing.T) {
 		},
 	}
 
-	setNestedValue(data, "orchestrator.model", "opus")
+	if err := setNestedValue(data, "orchestrator.model", "opus"); err != nil {
+		t.Fatal(err)
+	}
 
 	val, _ := getNestedValue(data, "orchestrator.model")
 	if val != "opus" {
 		t.Errorf("expected opus, got %v", val)
 	}
 
-	setNestedValue(data, "new.nested.key", "value")
+	if err := setNestedValue(data, "new.nested.key", "value"); err != nil {
+		t.Fatal(err)
+	}
 	val, _ = getNestedValue(data, "new.nested.key")
 	if val != "value" {
 		t.Errorf("expected value, got %v", val)

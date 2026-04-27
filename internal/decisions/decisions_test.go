@@ -13,7 +13,7 @@ func TestStore_AppendAndReadAll(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	store.Append(Record{
+	_ = store.Append(Record{
 		TaskID:    "t1",
 		Question:  "Should we use Redis or Postgres for sessions?",
 		Answer:    "Postgres",
@@ -21,7 +21,7 @@ func TestStore_AppendAndReadAll(t *testing.T) {
 		DecidedBy: "human",
 		Timestamp: now,
 	})
-	store.Append(Record{
+	_ = store.Append(Record{
 		TaskID:    "t2",
 		Question:  "REST or gRPC for internal APIs?",
 		Answer:    "gRPC",
@@ -49,7 +49,7 @@ func TestStore_Search(t *testing.T) {
 	dir := t.TempDir()
 	store, _ := NewStore(dir)
 
-	store.Append(
+	_ = store.Append(
 		Record{TaskID: "t1", Question: "Use Redis?", Answer: "No", Reason: "complexity"},
 		Record{TaskID: "t2", Question: "Use Postgres?", Answer: "Yes", Reason: "already in stack"},
 		Record{TaskID: "t3", Question: "Auth library?", Answer: "custom", Reason: "control"},

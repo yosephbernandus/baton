@@ -50,7 +50,7 @@ spec:
 func TestValidate_Valid(t *testing.T) {
 	tmp := t.TempDir()
 	ctxFile := filepath.Join(tmp, "test.go")
-	os.WriteFile(ctxFile, []byte("package main"), 0o644)
+	_ = os.WriteFile(ctxFile, []byte("package main"), 0o644)
 
 	s := &Spec{
 		What:               "Do something",

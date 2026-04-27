@@ -48,13 +48,13 @@ func NewStatusCmd() *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-			fmt.Fprintln(w, "TASK ID\tRUNTIME\tMODEL\tSTATUS\tDURATION")
+			_, _ = fmt.Fprintln(w, "TASK ID\tRUNTIME\tMODEL\tSTATUS\tDURATION")
 			for _, t := range tasks {
 				duration := t.Duration
 				if duration == "" {
 					duration = "-"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Runtime, t.Model, t.Status, duration)
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Runtime, t.Model, t.Status, duration)
 			}
 			return w.Flush()
 		},

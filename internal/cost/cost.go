@@ -81,7 +81,7 @@ func (t *Tracker) Record(entry Entry) error {
 	if err != nil {
 		return fmt.Errorf("opening cost log: %w", err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	_, err = f.Write(line)
 	return err
