@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -151,7 +152,9 @@ func (r *Runner) buildCommand(ctx context.Context, rt *config.RuntimeConfig, mod
 	args = append(args, rt.ExtraFlags...)
 
 	cmd := exec.CommandContext(ctx, rt.Command, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if runtime.GOOS != "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 	return cmd
 }
 
