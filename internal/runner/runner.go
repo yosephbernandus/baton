@@ -141,13 +141,20 @@ func buildArgs(rt *config.RuntimeConfig, model, prompt string, s *spec.Spec) []s
 	if rt.ModelFlag != "" {
 		args = append(args, rt.ModelFlag, model)
 	}
-	if rt.PromptFlag != "" {
-		args = append(args, rt.PromptFlag, prompt)
-	}
 	if rt.ContextFlag != "" && s != nil && len(s.ContextFiles) > 0 {
 		args = append(args, rt.ContextFlag, strings.Join(s.ContextFiles, ","))
 	}
 	args = append(args, rt.ExtraFlags...)
+	if rt.PromptFlag != "" {
+		args = append(args, rt.PromptFlag, prompt)
+	}
+	for _, p := range rt.Positional {
+		if p == "{{prompt}}" {
+			args = append(args, prompt)
+		} else {
+			args = append(args, p)
+		}
+	}
 
 	return args
 }

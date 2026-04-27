@@ -33,13 +33,14 @@ type OrchestratorConfig struct {
 }
 
 type RuntimeConfig struct {
-	Command     string   `yaml:"command"`
-	ModelFlag   string   `yaml:"model_flag"`
-	PromptFlag  string   `yaml:"prompt_flag"`
-	ContextFlag string   `yaml:"context_flag"`
-	ExtraFlags  []string `yaml:"extra_flags"`
-	Workdir     string   `yaml:"workdir"`
-	Models      []string `yaml:"models"`
+	Command      string   `yaml:"command"`
+	ModelFlag    string   `yaml:"model_flag"`
+	PromptFlag   string   `yaml:"prompt_flag"`
+	ContextFlag  string   `yaml:"context_flag"`
+	ExtraFlags   []string `yaml:"extra_flags"`
+	Positional  []string `yaml:"positional"`
+	Workdir      string   `yaml:"workdir"`
+	Models       []string `yaml:"models"`
 }
 
 type DefaultsConfig struct {
