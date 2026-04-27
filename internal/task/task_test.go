@@ -127,3 +127,40 @@ func TestStore_AddAttempt(t *testing.T) {
 		t.Errorf("expected attempt 2, got %d", got.Attempts[1].Attempt)
 	}
 }
+
+func TestStore_CleanStale(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewStore(dir)
+
+	old := time.Now().UTC().Add(-2 * time.Hour)
+	recent := time.Now().UTC().Add(-5 * time.Minute)
+
+	store.Create(&Task{ID: "stale-running", Status: "running", CreatedAt: old})
+	store.Create(&Task{ID: "stale-pending", Status: "pending", CreatedAt: old})
+	store.Create(&Task{ID: "fresh-running", Status: "running", CreatedAt: recent})
+	store.Create(&Task{ID: "old-completed", Status: "completed", CreatedAt: old})
+
+	cleaned, err := store.CleanStale(1 * time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(cleaned) != 2 {
+		t.Errorf("expected 2 cleaned, got %d: %v", len(cleaned), cleaned)
+	}
+
+	got, _ := store.Get("stale-running")
+	if got.Status != "failed" {
+		t.Errorf("expected failed, got %s", got.Status)
+	}
+
+	fresh, _ := store.Get("fresh-running")
+	if fresh.Status != "running" {
+		t.Errorf("fresh task should still be running, got %s", fresh.Status)
+	}
+
+	completed, _ := store.Get("old-completed")
+	if completed.Status != "completed" {
+		t.Errorf("completed task should be unchanged, got %s", completed.Status)
+	}
+}

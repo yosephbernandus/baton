@@ -113,6 +113,33 @@ func (s *Store) AddAttempt(id string, a Attempt) error {
 	return s.Update(t)
 }
 
+func (s *Store) CleanStale(maxAge time.Duration) ([]string, error) {
+	tasks, err := s.List("")
+	if err != nil {
+		return nil, err
+	}
+
+	var cleaned []string
+	cutoff := time.Now().UTC().Add(-maxAge)
+
+	for _, t := range tasks {
+		if t.Status != "running" && t.Status != "pending" {
+			continue
+		}
+		if t.CreatedAt.Before(cutoff) {
+			t.Status = "failed"
+			t.Error = "stale: cleaned up after " + maxAge.String()
+			now := time.Now().UTC()
+			t.CompletedAt = &now
+			if err := s.Update(t); err != nil {
+				continue
+			}
+			cleaned = append(cleaned, t.ID)
+		}
+	}
+	return cleaned, nil
+}
+
 func (s *Store) write(t *Task) error {
 	data, err := yaml.Marshal(t)
 	if err != nil {

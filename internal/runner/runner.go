@@ -11,6 +11,7 @@ import (
 
 	"github.com/yosephbernandus/baton/internal/config"
 	"github.com/yosephbernandus/baton/internal/events"
+	gitpkg "github.com/yosephbernandus/baton/internal/git"
 	"github.com/yosephbernandus/baton/internal/spec"
 	"github.com/yosephbernandus/baton/internal/task"
 )
@@ -21,6 +22,7 @@ type Result struct {
 	Clarification string
 	Output        []string
 	ChecksFailed  []string
+	FilesChanged  []string
 	Duration      time.Duration
 }
 
@@ -45,6 +47,8 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 	r.emitter.TaskEvent(taskID, runtimeName, model, r.cfg.Orchestrator.Runtime+"/"+r.cfg.Orchestrator.Model, "task_started", map[string]interface{}{
 		"attempt": 1,
 	})
+
+	beforeSnap, _ := gitpkg.TakeSnapshot()
 
 	start := time.Now()
 
@@ -102,6 +106,17 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		}
 	}
 
+	var filesChanged []string
+	afterSnap, _ := gitpkg.TakeSnapshot()
+	if beforeSnap != nil && afterSnap != nil {
+		filesChanged = gitpkg.DetectChanges(beforeSnap, afterSnap)
+		for _, f := range filesChanged {
+			r.emitter.TaskEvent(taskID, runtimeName, model, "", "file_changed", map[string]interface{}{
+				"path": f,
+			})
+		}
+	}
+
 	eventType := "task_" + status
 	if status == "needs_clarification" {
 		eventType = "needs_clarification"
@@ -116,6 +131,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		ExitCode:      exitCode,
 		Clarification: clarification,
 		Output:        output,
+		FilesChanged:  filesChanged,
 		Duration:      duration,
 	}, nil
 }

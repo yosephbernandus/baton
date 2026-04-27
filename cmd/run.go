@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -27,6 +28,7 @@ func NewRunCmd() *cobra.Command {
 		contextFiles   string
 		skipValidation bool
 		timeoutFlag    string
+		jsonOutput     bool
 	)
 
 	cmd := &cobra.Command{
@@ -173,6 +175,7 @@ func NewRunCmd() *cobra.Command {
 			t.CompletedAt = &completedAt
 			t.ExitCode = &result.ExitCode
 			t.Duration = result.Duration.Round(time.Second).String()
+			t.FilesChanged = result.FilesChanged
 			if result.Clarification != "" {
 				t.Escalation.WorkerClarification = result.Clarification
 			}
@@ -182,9 +185,17 @@ func NewRunCmd() *cobra.Command {
 			}
 			store.Update(t)
 
+			if jsonOutput {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				enc.Encode(t)
+			}
+
 			switch result.Status {
 			case "completed":
-				fmt.Fprintf(os.Stdout, "task %s completed in %s\n", taskID, t.Duration)
+				if !jsonOutput {
+					fmt.Fprintf(os.Stdout, "task %s completed in %s\n", taskID, t.Duration)
+				}
 				return nil
 			case "failed":
 				msg := fmt.Sprintf("task %s failed (exit code %d)", taskID, result.ExitCode)
@@ -193,7 +204,9 @@ func NewRunCmd() *cobra.Command {
 				}
 				return exitError(1, "%s", msg)
 			case "needs_clarification":
-				fmt.Fprintf(os.Stdout, "task %s needs clarification: %s\n", taskID, result.Clarification)
+				if !jsonOutput {
+					fmt.Fprintf(os.Stdout, "task %s needs clarification: %s\n", taskID, result.Clarification)
+				}
 				return exitError(10, "")
 			case "timeout":
 				return exitError(124, "task %s timed out after %s", taskID, timeoutFlag)
@@ -211,6 +224,7 @@ func NewRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&contextFiles, "context-files", "", "comma-separated context files (with --prompt)")
 	cmd.Flags().BoolVar(&skipValidation, "skip-validation", false, "skip spec validation")
 	cmd.Flags().StringVar(&timeoutFlag, "timeout", "10m", "max time before killing worker")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output task record as JSON")
 
 	return cmd
 }

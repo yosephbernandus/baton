@@ -20,8 +20,10 @@ type Event struct {
 }
 
 type Emitter struct {
-	path string
-	mu   sync.Mutex
+	path         string
+	mu           sync.Mutex
+	maxSizeBytes int64
+	keepCount    int
 }
 
 func NewEmitter(path string) (*Emitter, error) {
@@ -29,7 +31,15 @@ func NewEmitter(path string) (*Emitter, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating event log directory: %w", err)
 	}
-	return &Emitter{path: path}, nil
+	return &Emitter{path: path, maxSizeBytes: 10 * 1024 * 1024, keepCount: 3}, nil
+}
+
+func NewEmitterWithRotation(path string, maxSizeMB, keepCount int) (*Emitter, error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating event log directory: %w", err)
+	}
+	return &Emitter{path: path, maxSizeBytes: int64(maxSizeMB) * 1024 * 1024, keepCount: keepCount}, nil
 }
 
 func (e *Emitter) Emit(ev Event) error {
@@ -53,7 +63,32 @@ func (e *Emitter) Emit(ev Event) error {
 	defer f.Close()
 
 	_, err = f.Write(line)
-	return err
+	if err != nil {
+		return err
+	}
+
+	info, err := f.Stat()
+	if err == nil && e.maxSizeBytes > 0 && info.Size() > e.maxSizeBytes {
+		f.Close()
+		e.rotate()
+		return nil
+	}
+
+	return nil
+}
+
+func (e *Emitter) rotate() {
+	for i := e.keepCount - 1; i >= 1; i-- {
+		old := fmt.Sprintf("%s.%d", e.path, i)
+		new := fmt.Sprintf("%s.%d", e.path, i+1)
+		os.Rename(old, new)
+	}
+	os.Rename(e.path, e.path+".1")
+
+	if e.keepCount > 0 {
+		remove := fmt.Sprintf("%s.%d", e.path, e.keepCount+1)
+		os.Remove(remove)
+	}
 }
 
 func (e *Emitter) TaskEvent(taskID, runtime, model, dispatchedBy, eventType string, data map[string]interface{}) error {
