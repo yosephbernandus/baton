@@ -5,9 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/yosephbernandus/baton/internal/config"
@@ -137,7 +135,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 	}, nil
 }
 
-func (r *Runner) buildCommand(ctx context.Context, rt *config.RuntimeConfig, model, prompt string, s *spec.Spec) *exec.Cmd {
+func buildArgs(rt *config.RuntimeConfig, model, prompt string, s *spec.Spec) []string {
 	var args []string
 
 	if rt.ModelFlag != "" {
@@ -151,11 +149,7 @@ func (r *Runner) buildCommand(ctx context.Context, rt *config.RuntimeConfig, mod
 	}
 	args = append(args, rt.ExtraFlags...)
 
-	cmd := exec.CommandContext(ctx, rt.Command, args...)
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
-	return cmd
+	return args
 }
 
 func (r *Runner) determineStatus(exitCode int, clarification string, ctx context.Context) string {
