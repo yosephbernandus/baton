@@ -10,17 +10,37 @@ Baton is that bridge. It doesn't plan, reason, or make decisions. It dispatches 
 
 ## Install
 
+### One-line install (Linux/macOS)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yosephbernandus/baton/main/install.sh | sh
+```
+
+Works with bash, zsh, and fish. Detects OS and architecture automatically.
+
+Custom install directory:
+
+```bash
+BATON_INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/yosephbernandus/baton/main/install.sh | sh
+```
+
+### Go install
+
 ```bash
 go install github.com/yosephbernandus/baton@latest
 ```
 
-Or build from source:
+### Build from source
 
 ```bash
 git clone https://github.com/yosephbernandus/baton.git
 cd baton
 go build -o baton .
 ```
+
+### Download binary manually
+
+Pre-built binaries for Linux, macOS, and Windows (amd64/arm64) are available on the [Releases](https://github.com/yosephbernandus/baton/releases) page.
 
 ## Quick Start
 
