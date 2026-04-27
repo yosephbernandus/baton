@@ -12,9 +12,3 @@ linters:
     - ineffassign
     - gocritic
     - gosimple
-
-exclusions:
-  rules:
-    - path: _test\.go
-      linters:
-        - errcheck
