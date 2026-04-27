@@ -2,13 +2,23 @@
 # Copy to ~/.baton/agents.yaml (user-level) or ./.baton/agents.yaml (project-level)
 # Project-level takes precedence.
 
+# Three-tier model:
+#   Tier 1 - Architect: Opus (morning planning, evening review, hard decisions)
+#   Tier 2 - Orchestrator: Sonnet (daily coordination, delegation, reviews)
+#   Tier 3 - Workers: cheap models via external runtimes (code writing)
+#
+# The orchestrator field identifies the daily orchestrator (Tier 2),
+# not the architect. Opus is invoked manually by the human as needed.
 orchestrator:
   runtime: claude-code
   model: sonnet
 
 # Runtime definitions
-# See README for full OpenCode configuration example
 runtimes:
+  # OpenCode requires special configuration for 'run' subcommand:
+  # - positional: ["run", "{{prompt}}"] places 'run' after opencode, then prompt
+  # - context_flag: "--file" (not --files) for context files
+  # - extra_flags may include --dangerously-skip-permissions for non-interactive use
   opencode:
     command: "opencode"
     model_flag: "--model"
@@ -25,10 +35,98 @@ runtimes:
       - gemini-flash
       - deepseek-r1
 
+  pi-agent:
+    command: "pi-agent"
+    model_flag: "--model"
+    prompt_flag: "--prompt"
+    context_flag: "--context"
+    workdir: "inherit"
+    models:
+      - gemini
+      - grok
+
+  aider:
+    command: "aider"
+    model_flag: "--model"
+    prompt_flag: "--message"
+    context_flag: ""
+    extra_flags:
+      - "--yes"
+      - "--no-auto-commits"
+    workdir: "inherit"
+    models:
+      - gpt-4o
+      - deepseek
+      - claude-sonnet
+
 # Defaults when flags omitted
 defaults:
   runtime: opencode
   model: kimi
+
+# Task routing rules (read by orchestrator, not enforced by baton)
+# Rules evaluated in order, first match wins.
+routing:
+  rules:
+    # Trivial: orchestrator does it directly
+    - match:
+        estimated_complexity: trivial
+        estimated_tokens: "<2000"
+      action: keep
+      reason: "Orchestration tax exceeds task cost"
+
+    # Architecture/security: escalate to Opus
+    - match:
+        domain: [architecture, design, security, auth]
+        estimated_complexity: high
+      action: escalate
+      target: opus
+      reason: "Requires deep reasoning, save for Opus budget"
+
+    # Frontend
+    - match:
+        domain: [frontend, css, ui, components]
+      action: delegate
+      runtime: opencode
+      model: kimi
+
+    # Infrastructure
+    - match:
+        domain: [infra, k8s, terraform, ci-cd]
+      action: delegate
+      runtime: opencode
+      model: deepseek
+
+    # Tests and boilerplate: cheapest model
+    - match:
+        domain: [tests, boilerplate, scaffolding, i18n]
+      action: delegate
+      runtime: opencode
+      model: gemini-flash
+
+    # Default
+    - match:
+        default: true
+      action: delegate
+      runtime: opencode
+      model: kimi
+
+  # Sonnet coherence checkpoint: run after every N completed tasks
+  checkpoint_interval: 3
+
+  # Who reviews high-criticality tasks before proceeding
+  critical_review: opus
+
+# Clarification detection
+clarification_patterns:
+  - "I'm not sure"
+  - "unclear which"
+  - "could you clarify"
+  - "ambiguous"
+  - "multiple possible"
+  - "CLARIFICATION_NEEDED"
+
+clarification_exit_code: 10
 
 # Paths (relative to project root)
 event_log: ".baton/events.ndjson"
@@ -37,6 +135,10 @@ result_dir: ".baton/results"
 spec_dir: ".baton/specs"
 lock_file: ".baton/locks.yaml"
 project_brief: ".baton/project-brief.md"
+
+# Log rotation
+log_max_size_mb: 10
+log_keep_count: 3
 
 # Default task timeout
 default_timeout: "10m"
