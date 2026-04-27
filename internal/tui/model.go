@@ -66,6 +66,7 @@ type Model struct {
 	cancel     context.CancelFunc
 	showOutput bool
 	quitting   bool
+	killCh     chan string
 }
 
 type eventMsg events.Event
@@ -110,6 +111,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			m.showOutput = !m.showOutput
+		case "K":
+			if m.cursor < len(m.taskOrder) {
+				id := m.taskOrder[m.cursor]
+				t := m.tasks[id]
+				if t.Status == "running" && m.killCh != nil {
+					m.killCh <- id
+				}
+			}
+		case "c":
+			m.clearStale()
 		}
 
 	case tea.WindowSizeMsg:
@@ -151,7 +162,7 @@ func (m *Model) View() string {
 		b.WriteString("\n")
 	}
 
-	help := helpStyle.Render("[↑/↓] select  [enter] output  [q] quit")
+	help := helpStyle.Render("[↑/↓] select  [enter] output  [K] kill  [c] clear  [q] quit")
 	b.WriteString(help)
 
 	return b.String()
@@ -321,11 +332,31 @@ func (m *Model) renderEscalationBanner() string {
 	for _, id := range m.taskOrder {
 		t := m.tasks[id]
 		if t.Status == "needs_human" || (t.Status == "needs_clarification" && t.Clarify != "") {
-			msg := fmt.Sprintf("! %s blocked — %s", t.ID, t.Clarify)
+			msg := fmt.Sprintf("! %s blocked -- %s", t.ID, t.Clarify)
 			return bannerStyle.Render(msg)
 		}
 	}
 	return ""
+}
+
+func (m *Model) clearStale() {
+	var newOrder []string
+	for _, id := range m.taskOrder {
+		t := m.tasks[id]
+		if t.Status == "running" || t.Status == "pending" {
+			newOrder = append(newOrder, id)
+		} else {
+			delete(m.tasks, id)
+		}
+	}
+	m.taskOrder = newOrder
+	if m.cursor >= len(m.taskOrder) && m.cursor > 0 {
+		m.cursor = len(m.taskOrder) - 1
+	}
+}
+
+func (m *Model) SetKillChannel(ch chan string) {
+	m.killCh = ch
 }
 
 func waitForEvent(ch <-chan events.Event) tea.Cmd {

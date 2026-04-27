@@ -1,0 +1,42 @@
+# Baton Configuration
+# Copy to ~/.baton/agents.yaml (user-level) or ./.baton/agents.yaml (project-level)
+# Project-level takes precedence.
+
+orchestrator:
+  runtime: claude-code
+  model: sonnet
+
+# Runtime definitions
+# See README for full OpenCode configuration example
+runtimes:
+  opencode:
+    command: "opencode"
+    model_flag: "--model"
+    context_flag: "--file"
+    positional:
+      - "run"
+      - "{{prompt}}"
+    extra_flags:
+      - "--dangerously-skip-permissions"
+    workdir: "inherit"
+    models:
+      - kimi
+      - deepseek
+      - gemini-flash
+      - deepseek-r1
+
+# Defaults when flags omitted
+defaults:
+  runtime: opencode
+  model: kimi
+
+# Paths (relative to project root)
+event_log: ".baton/events.ndjson"
+task_dir: ".baton/tasks"
+result_dir: ".baton/results"
+spec_dir: ".baton/specs"
+lock_file: ".baton/locks.yaml"
+project_brief: ".baton/project-brief.md"
+
+# Default task timeout
+default_timeout: "10m"
