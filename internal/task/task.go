@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/yosephbernandus/baton/internal/spec"
@@ -124,8 +123,13 @@ func (s *Store) KillTask(id string) error {
 		return fmt.Errorf("task %s has no PID recorded", id)
 	}
 
-	if err := syscall.Kill(t.PID, syscall.SIGTERM); err != nil {
-		return fmt.Errorf("killing PID %d: %w", t.PID, err)
+	proc, err := os.FindProcess(t.PID)
+	if err != nil {
+		return fmt.Errorf("finding process %d: %w", t.PID, err)
+	}
+
+	if err := proc.Kill(); err != nil {
+		return fmt.Errorf("killing process %d: %w", t.PID, err)
 	}
 
 	t.Status = "killed"
