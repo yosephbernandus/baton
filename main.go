@@ -23,6 +23,7 @@ func main() {
 		cmd.NewListCmd(),
 		cmd.NewResultCmd(),
 		cmd.NewMonitorCmd(),
+		cmd.NewConfigCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

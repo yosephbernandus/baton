@@ -1,44 +1,124 @@
-orchestrator:
-  runtime: claude-code
-  model: sonnet
-
-runtimes:
-  mock:
-    command: "./testdata/mock-runtime.sh"
-    model_flag: "-m"
-    prompt_flag: "-p"
-    context_flag: "--files"
-    workdir: "inherit"
-    models:
-      - test
-  bash-mock:
-    command: "bash"
-    model_flag: ""
-    prompt_flag: "-c"
-    context_flag: ""
-    workdir: "inherit"
-    models:
-      - test
-  slow-mock:
-    command: "./testdata/mock-slow.sh"
-    model_flag: "-m"
-    prompt_flag: "-p"
-    context_flag: ""
-    workdir: "inherit"
-    models:
-      - test
-
-defaults:
-  runtime: mock
-  model: test
-
-clarification_patterns:
-  - "CLARIFICATION_NEEDED"
-  - "I'm not sure"
-
 clarification_exit_code: 10
-
-event_log: ".baton/events.ndjson"
-task_dir: ".baton/tasks"
-result_dir: ".baton/results"
-spec_dir: ".baton/specs"
+clarification_patterns:
+    - CLARIFICATION_NEEDED
+    - I'm not sure
+default_timeout: 10m
+defaults:
+    model: kimi
+    runtime: opencode
+event_log: .baton/events.ndjson
+lock_file: .baton/locks.yaml
+orchestrator:
+    model: sonnet
+    runtime: claude-code
+project_brief: .baton/project-brief.md
+result_dir: .baton/results
+routing:
+    checkpoint_interval: 3
+    critical_review: opus
+    rules:
+        - action: keep
+          match:
+            estimated_complexity: trivial
+          reason: Orchestration tax exceeds task cost
+        - action: escalate
+          match:
+            domain:
+                - architecture
+                - design
+                - security
+                - auth
+            estimated_complexity: high
+          reason: Requires deep reasoning
+          target: opus
+        - action: delegate
+          match:
+            domain:
+                - frontend
+                - css
+                - ui
+                - components
+          model: kimi
+          runtime: opencode
+        - action: delegate
+          match:
+            domain:
+                - infra
+                - k8s
+                - terraform
+                - ci-cd
+          model: deepseek
+          runtime: opencode
+        - action: delegate
+          match:
+            domain:
+                - tests
+                - boilerplate
+                - scaffolding
+          model: gemini-flash
+          runtime: opencode
+        - action: delegate
+          match:
+            default: true
+          model: kimi
+          runtime: opencode
+runtimes:
+    aider:
+        command: aider
+        context_flag: ""
+        extra_flags:
+            - --yes
+            - --no-auto-commits
+        model_flag: --model
+        models:
+            - gpt-4o
+            - deepseek
+            - claude-sonnet
+        prompt_flag: --message
+        workdir: inherit
+    bash-mock:
+        command: bash
+        context_flag: ""
+        model_flag: ""
+        models:
+            - test
+        prompt_flag: -c
+        workdir: inherit
+    mock:
+        command: ./testdata/mock-runtime.sh
+        context_flag: --files
+        model_flag: -m
+        models:
+            - test
+        prompt_flag: -p
+        workdir: inherit
+    opencode:
+        command: opencode
+        context_flag: --files
+        model_flag: -m
+        models:
+            - kimi
+            - deepseek
+            - gemini-flash
+            - deepseek-r1
+        prompt_flag: -p
+        workdir: inherit
+    pi-agent:
+        command: pi-agent
+        context_flag: --context
+        model_flag: --model
+        models:
+            - gemini
+            - grok
+        prompt_flag: --prompt
+        workdir: inherit
+    slow-mock:
+        command: ./testdata/mock-slow.sh
+        context_flag: ""
+        model_flag: -m
+        models:
+            - test
+        prompt_flag: -p
+        workdir: inherit
+spec_dir: .baton/specs
+task_dir: .baton/tasks
