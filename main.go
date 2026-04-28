@@ -25,6 +25,7 @@ func main() {
 		cmd.NewMonitorCmd(),
 		cmd.NewConfigCmd(),
 		cmd.NewCostCmd(),
+		cmd.NewKillCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

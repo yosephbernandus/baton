@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 	"github.com/yosephbernandus/baton/internal/config"
+	"github.com/yosephbernandus/baton/internal/events"
 	"github.com/yosephbernandus/baton/internal/task"
 	"github.com/yosephbernandus/baton/internal/tui"
 )
@@ -31,13 +32,19 @@ func NewMonitorCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("creating task store: %w", err)
 			}
-			killCh := make(chan string, 1)
+
+			emitter, _ := events.NewEmitter(cfg.EventLog)
+
+			killCh := make(chan string, 10)
 			model.SetKillChannel(killCh)
 
 			go func() {
 				for taskID := range killCh {
 					if err := store.KillTask(taskID); err != nil {
 						fmt.Fprintf(cmd.OutOrStderr(), "kill error: %v\n", err)
+					}
+					if emitter != nil {
+						_ = emitter.TaskEvent(taskID, "", "", "", "task_killed", nil)
 					}
 				}
 			}()

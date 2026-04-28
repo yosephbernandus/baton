@@ -116,7 +116,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				id := m.taskOrder[m.cursor]
 				t := m.tasks[id]
 				if t.Status == "running" && m.killCh != nil {
-					m.killCh <- id
+					select {
+					case m.killCh <- id:
+					default:
+					}
 				}
 			}
 		case "c":
@@ -226,6 +229,8 @@ func (m *Model) processEvent(ev events.Event) {
 		}
 	case "needs_human":
 		t.Status = "needs_human"
+	case "task_killed":
+		t.Status = "killed"
 	}
 }
 
@@ -285,6 +290,8 @@ func (m *Model) styledStatus(t *taskState) string {
 		return statusClarify.Render("? needs clarify")
 	case "needs_human":
 		return statusHuman.Render("! needs human")
+	case "killed":
+		return statusFailed.Render("☠ killed")
 	case "pending":
 		return "○ pending"
 	default:
