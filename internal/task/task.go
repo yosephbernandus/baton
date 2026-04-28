@@ -119,17 +119,8 @@ func (s *Store) KillTask(id string) error {
 		return err
 	}
 
-	if t.PID <= 0 {
-		return fmt.Errorf("task %s has no PID recorded", id)
-	}
-
-	proc, err := os.FindProcess(t.PID)
-	if err != nil {
-		return fmt.Errorf("finding process %d: %w", t.PID, err)
-	}
-
-	if err := proc.Kill(); err != nil {
-		return fmt.Errorf("killing process %d: %w", t.PID, err)
+	if t.PID > 0 {
+		killProcessGroup(t.PID)
 	}
 
 	t.Status = "killed"

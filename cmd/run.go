@@ -188,6 +188,11 @@ func NewRunCmd() *cobra.Command {
 				return exitError(1, "runner error: %v", err)
 			}
 
+			current, _ := store.Get(taskID)
+			if current != nil && current.Status == "killed" {
+				return nil
+			}
+
 			completedAt := time.Now().UTC()
 			t.Status = result.Status
 			t.CompletedAt = &completedAt

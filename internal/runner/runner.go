@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/yosephbernandus/baton/internal/config"
@@ -154,22 +153,6 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 	}, nil
 }
 
-func (r *Runner) KillTask(taskID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	cmd, ok := r.procs[taskID]
-	if !ok {
-		return fmt.Errorf("task %s not found or not running", taskID)
-	}
-
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		return fmt.Errorf("sending SIGTERM to task %s: %w", taskID, err)
-	}
-
-	delete(r.procs, taskID)
-	return nil
-}
 
 func buildArgs(rt *config.RuntimeConfig, model, prompt string, s *spec.Spec) []string {
 	var args []string
