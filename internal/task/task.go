@@ -26,6 +26,7 @@ type Task struct {
 	PID          int         `yaml:"pid,omitempty"`
 	ExitCode     *int        `yaml:"exit_code,omitempty"`
 	FilesChanged []string    `yaml:"files_changed,omitempty"`
+	OutputTail   []string    `yaml:"output_tail,omitempty"`
 	Error        string      `yaml:"error,omitempty"`
 }
 

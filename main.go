@@ -26,6 +26,7 @@ func main() {
 		cmd.NewConfigCmd(),
 		cmd.NewCostCmd(),
 		cmd.NewKillCmd(),
+		cmd.NewWaitCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

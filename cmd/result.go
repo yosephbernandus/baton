@@ -6,7 +6,9 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/yosephbernandus/baton/internal/ansi"
 	"github.com/yosephbernandus/baton/internal/config"
+	"github.com/yosephbernandus/baton/internal/events"
 	"github.com/yosephbernandus/baton/internal/task"
 )
 
@@ -16,6 +18,8 @@ func NewResultCmd() *cobra.Command {
 		clarification bool
 		escalation    bool
 		filesOnly     bool
+		showOutput    bool
+		showOutputFull bool
 	)
 
 	cmd := &cobra.Command{
@@ -63,6 +67,28 @@ func NewResultCmd() *cobra.Command {
 				return nil
 			}
 
+			if showOutputFull {
+				lines, err := events.ReadTaskOutput(cfg.EventLog, taskID)
+				if err != nil {
+					return exitError(1, "reading output: %v", err)
+				}
+				for _, line := range ansi.StripLines(lines) {
+					fmt.Println(line)
+				}
+				return nil
+			}
+
+			if showOutput {
+				if len(t.OutputTail) == 0 {
+					fmt.Println("(no output stored)")
+				} else {
+					for _, line := range t.OutputTail {
+						fmt.Println(line)
+					}
+				}
+				return nil
+			}
+
 			if filesOnly {
 				for _, f := range t.FilesChanged {
 					fmt.Println(f)
@@ -92,6 +118,8 @@ func NewResultCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&clarification, "clarification", false, "show worker clarification")
 	cmd.Flags().BoolVar(&escalation, "escalation", false, "show full escalation chain")
 	cmd.Flags().BoolVar(&filesOnly, "files-only", false, "only show changed files")
+	cmd.Flags().BoolVar(&showOutput, "output", false, "show stored output tail")
+	cmd.Flags().BoolVar(&showOutputFull, "output-full", false, "extract full output from event log")
 	return cmd
 }
 

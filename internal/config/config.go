@@ -25,6 +25,7 @@ type Config struct {
 	LogMaxSizeMB    int                      `yaml:"log_max_size_mb"`
 	LogKeepCount    int                      `yaml:"log_keep_count"`
 	DefaultTimeout  string                   `yaml:"default_timeout"`
+	OutputTailLines int                      `yaml:"output_tail_lines"`
 }
 
 type OrchestratorConfig struct {
@@ -146,7 +147,8 @@ func defaultConfig() *Config {
 		ProjectBrief:   ".baton/project-brief.md",
 		LogMaxSizeMB:   10,
 		LogKeepCount:   3,
-		DefaultTimeout: "10m",
+		DefaultTimeout:  "10m",
+		OutputTailLines: 50,
 	}
 }
 

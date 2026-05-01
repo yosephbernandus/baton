@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/yosephbernandus/baton/internal/ansi"
 	"github.com/yosephbernandus/baton/internal/brief"
 	"github.com/yosephbernandus/baton/internal/config"
 	"github.com/yosephbernandus/baton/internal/cost"
@@ -199,6 +200,15 @@ func NewRunCmd() *cobra.Command {
 			t.ExitCode = &result.ExitCode
 			t.Duration = result.Duration.Round(time.Second).String()
 			t.FilesChanged = result.FilesChanged
+			tailN := cfg.OutputTailLines
+			if tailN <= 0 {
+				tailN = 50
+			}
+			if len(result.Output) > tailN {
+				t.OutputTail = ansi.StripLines(result.Output[len(result.Output)-tailN:])
+			} else {
+				t.OutputTail = ansi.StripLines(result.Output)
+			}
 			if result.Clarification != "" {
 				t.Escalation.WorkerClarification = result.Clarification
 			}
