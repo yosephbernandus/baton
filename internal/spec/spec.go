@@ -181,3 +181,21 @@ func BuildPrompt(s *Spec, projectBrief string) string {
 
 	return b.String()
 }
+
+func BuildPromptWithResponse(s *Spec, projectBrief, clarification, answer, reason string) string {
+	base := BuildPrompt(s, projectBrief)
+
+	var b strings.Builder
+	b.WriteString(base)
+	b.WriteString("\n[PREVIOUS ATTEMPT]\n")
+	if clarification != "" {
+		fmt.Fprintf(&b, "The worker asked: %s\n", clarification)
+	}
+	fmt.Fprintf(&b, "Answer: %s\n", answer)
+	if reason != "" {
+		fmt.Fprintf(&b, "Reason: %s\n", reason)
+	}
+	b.WriteString("\nProceed with this guidance. Do NOT ask the same question again.\n")
+
+	return b.String()
+}

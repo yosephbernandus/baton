@@ -27,6 +27,7 @@ type Task struct {
 	ExitCode     *int        `yaml:"exit_code,omitempty"`
 	FilesChanged []string    `yaml:"files_changed,omitempty"`
 	OutputTail   []string    `yaml:"output_tail,omitempty"`
+	Response     *Response   `yaml:"response,omitempty"`
 	Error        string      `yaml:"error,omitempty"`
 }
 
@@ -35,6 +36,13 @@ type Escalation struct {
 	OrchestratorAnalysis string `yaml:"orchestrator_analysis,omitempty"`
 	HumanDecision        string `yaml:"human_decision,omitempty"`
 	HumanReason          string `yaml:"human_reason,omitempty"`
+}
+
+type Response struct {
+	Answer     string    `yaml:"answer"`
+	AnsweredBy string    `yaml:"answered_by"`
+	Reason     string    `yaml:"reason,omitempty"`
+	Timestamp  time.Time `yaml:"timestamp"`
 }
 
 type Attempt struct {

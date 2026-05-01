@@ -231,6 +231,12 @@ func (m *Model) processEvent(ev events.Event) {
 		t.Status = "needs_human"
 	case "task_killed":
 		t.Status = "killed"
+	case "task_deferred":
+		t.Status = "deferred"
+	case "task_responded":
+		t.Status = "pending"
+	case "task_redispatched":
+		t.Status = "running"
 	}
 }
 
@@ -292,6 +298,8 @@ func (m *Model) styledStatus(t *taskState) string {
 		return statusHuman.Render("! needs human")
 	case "killed":
 		return statusFailed.Render("☠ killed")
+	case "deferred":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("⏸ deferred")
 	case "pending":
 		return "○ pending"
 	default:
