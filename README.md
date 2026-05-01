@@ -186,6 +186,14 @@ The orchestration, role definitions, wiki-based knowledge base, and findings wor
 
 See [docs/user-guide.md](docs/user-guide.md) for a detailed guide on going from raw LLM discussion to a Baton task spec.
 
+## Integrate Baton Into Your Project
+
+See **[INTEGRATION.md](INTEGRATION.md)** for a complete step-by-step guide. Works with any LLM — tell your AI assistant:
+
+> "Read INTEGRATION.md from the baton repository and integrate baton into this project."
+
+The guide covers: runtime configuration, project brief setup, task spec format, orchestration patterns, feedback loop commands, and troubleshooting.
+
 ## Install
 
 ### One-line install (Linux/macOS)
