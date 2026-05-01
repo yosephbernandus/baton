@@ -29,6 +29,7 @@ func main() {
 		cmd.NewWaitCmd(),
 		cmd.NewRespondCmd(),
 		cmd.NewDeferCmd(),
+		cmd.NewEscalateCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

@@ -4,11 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/yosephbernandus/baton/internal/ansi"
+	"github.com/yosephbernandus/baton/internal/brief"
 	"github.com/yosephbernandus/baton/internal/config"
+	"github.com/yosephbernandus/baton/internal/decisions"
 	"github.com/yosephbernandus/baton/internal/events"
+	"github.com/yosephbernandus/baton/internal/routing"
 	"github.com/yosephbernandus/baton/internal/task"
 )
 
@@ -18,8 +22,9 @@ func NewResultCmd() *cobra.Command {
 		clarification bool
 		escalation    bool
 		filesOnly     bool
-		showOutput    bool
-		showOutputFull bool
+		showOutput      bool
+		showOutputFull  bool
+		clarifyContext  bool
 	)
 
 	cmd := &cobra.Command{
@@ -64,6 +69,66 @@ func NewResultCmd() *cobra.Command {
 				fmt.Printf("Orchestrator analysis: %s\n", valueOr(t.Escalation.OrchestratorAnalysis, "(none)"))
 				fmt.Printf("Human decision: %s\n", valueOr(t.Escalation.HumanDecision, "(none)"))
 				fmt.Printf("Human reason: %s\n", valueOr(t.Escalation.HumanReason, "(none)"))
+				return nil
+			}
+
+			if clarifyContext {
+				if t.Status != "needs_clarification" && t.Status != "needs_human" && t.Status != "deferred" {
+					return exitError(1, "task %s has status %q, not blocked", taskID, t.Status)
+				}
+
+				projectBrief := brief.Load(cfg.ProjectBrief)
+				var allDecisions []decisions.Record
+				if dstore, err := decisions.NewStore(cfg.ResultDir); err == nil {
+					allDecisions, _ = dstore.ReadAll()
+				}
+
+				verdict := routing.AnalyzeClarification(routing.ClarifyContext{
+					Clarification: t.Escalation.WorkerClarification,
+					Spec:          t.Spec,
+					ProjectBrief:  projectBrief,
+					Decisions:     allDecisions,
+					OutputTail:    t.OutputTail,
+				})
+
+				fmt.Printf("CLARIFICATION NEEDED for %s\n", taskID)
+				fmt.Printf("Question: %s\n", valueOr(t.Escalation.WorkerClarification, "(not recorded)"))
+				fmt.Println()
+
+				if len(t.OutputTail) > 0 {
+					fmt.Println("Worker output (last lines):")
+					maxLines := 10
+					start := 0
+					if len(t.OutputTail) > maxLines {
+						start = len(t.OutputTail) - maxLines
+					}
+					for _, line := range t.OutputTail[start:] {
+						fmt.Printf("  %s\n", line)
+					}
+					fmt.Println()
+				}
+
+				if len(allDecisions) > 0 {
+					matches := searchDecisions(allDecisions, t.Escalation.WorkerClarification)
+					if len(matches) > 0 {
+						fmt.Println("Related decisions:")
+						for _, d := range matches {
+							fmt.Printf("  - Q: %s -> A: %s (reason: %s)\n", d.Question, d.Answer, d.Reason)
+						}
+						fmt.Println()
+					}
+				}
+
+				if verdict.CanAutoAnswer {
+					fmt.Printf("Suggested answer: %s (from %s)\n", verdict.Answer, verdict.Source)
+					fmt.Printf("Confidence: %s\n", verdict.Confidence)
+				} else {
+					fmt.Printf("No auto-answer found (confidence: %s)\n", verdict.Confidence)
+					if verdict.Source != "" {
+						fmt.Printf("Hint: %s\n", verdict.Source)
+					}
+				}
+
 				return nil
 			}
 
@@ -120,7 +185,23 @@ func NewResultCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&filesOnly, "files-only", false, "only show changed files")
 	cmd.Flags().BoolVar(&showOutput, "output", false, "show stored output tail")
 	cmd.Flags().BoolVar(&showOutputFull, "output-full", false, "extract full output from event log")
+	cmd.Flags().BoolVar(&clarifyContext, "clarify-context", false, "show decision context for blocked task")
 	return cmd
+}
+
+func searchDecisions(records []decisions.Record, query string) []decisions.Record {
+	if query == "" {
+		return nil
+	}
+	queryLower := strings.ToLower(query)
+	var matches []decisions.Record
+	for _, r := range records {
+		if strings.Contains(strings.ToLower(r.Question), queryLower) ||
+			strings.Contains(queryLower, strings.ToLower(r.Answer)) {
+			matches = append(matches, r)
+		}
+	}
+	return matches
 }
 
 func valueOr(s, fallback string) string {

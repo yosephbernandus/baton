@@ -10,6 +10,7 @@ import (
 	"github.com/yosephbernandus/baton/internal/ansi"
 	"github.com/yosephbernandus/baton/internal/brief"
 	"github.com/yosephbernandus/baton/internal/config"
+	"github.com/yosephbernandus/baton/internal/decisions"
 	"github.com/yosephbernandus/baton/internal/events"
 	"github.com/yosephbernandus/baton/internal/runner"
 	"github.com/yosephbernandus/baton/internal/spec"
@@ -84,6 +85,19 @@ func NewRespondCmd() *cobra.Command {
 				"answered_by": answeredBy,
 				"reason":      reason,
 			})
+
+			if t.Escalation.WorkerClarification != "" {
+				if dstore, err := decisions.NewStore(cfg.ResultDir); err == nil {
+					_ = dstore.Append(decisions.Record{
+						TaskID:    taskID,
+						Question:  t.Escalation.WorkerClarification,
+						Answer:    answer,
+						Reason:    reason,
+						DecidedBy: answeredBy,
+						Timestamp: now,
+					})
+				}
+			}
 
 			if deferTask {
 				t.Status = "deferred"
