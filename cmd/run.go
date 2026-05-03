@@ -108,6 +108,9 @@ func NewRunCmd() *cobra.Command {
 				taskID = fmt.Sprintf("task-%d", time.Now().Unix())
 			}
 
+			taskDir := fmt.Sprintf(".baton/tasks/%s", taskID)
+			prompt = spec.BuildPromptWithProtocol(prompt, taskID, taskDir)
+
 			emitter, err := events.NewEmitter(cfg.EventLog)
 			if err != nil {
 				return exitError(1, "creating event emitter: %v", err)
@@ -196,6 +199,9 @@ func NewRunCmd() *cobra.Command {
 
 			completedAt := time.Now().UTC()
 			t.Status = result.Status
+			if result.SocketPath != "" {
+				t.SocketPath = result.SocketPath
+			}
 			t.CompletedAt = &completedAt
 			t.ExitCode = &result.ExitCode
 			t.Duration = result.Duration.Round(time.Second).String()
@@ -211,6 +217,9 @@ func NewRunCmd() *cobra.Command {
 			}
 			if result.Clarification != "" {
 				t.Escalation.WorkerClarification = result.Clarification
+			}
+			if result.ErrorDetail != "" {
+				t.Error = result.ErrorDetail
 			}
 			if len(t.Attempts) > 0 {
 				t.Attempts[0].CompletedAt = &completedAt
@@ -260,6 +269,9 @@ func NewRunCmd() *cobra.Command {
 				return nil
 			case "failed":
 				msg := fmt.Sprintf("task %s failed (exit code %d)", taskID, result.ExitCode)
+				if result.ErrorDetail != "" {
+					msg += fmt.Sprintf("\nerror: %s", result.ErrorDetail)
+				}
 				if len(result.ChecksFailed) > 0 {
 					msg += fmt.Sprintf("\nacceptance checks failed: %s", strings.Join(result.ChecksFailed, ", "))
 				}
@@ -284,7 +296,7 @@ func NewRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&taskIDFlag, "task-id", "", "task identifier (default: task-{timestamp})")
 	cmd.Flags().StringVar(&contextFiles, "context-files", "", "comma-separated context files (with --prompt)")
 	cmd.Flags().BoolVar(&skipValidation, "skip-validation", false, "skip spec validation")
-	cmd.Flags().StringVar(&timeoutFlag, "timeout", "10m", "max time before killing worker")
+	cmd.Flags().StringVar(&timeoutFlag, "timeout", "60m", "max time before killing worker (backstop)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output task record as JSON")
 	cmd.Flags().BoolVar(&autoRoute, "auto-route", false, "auto-select runtime/model from routing rules")
 

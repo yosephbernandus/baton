@@ -28,6 +28,7 @@ type Task struct {
 	FilesChanged []string    `yaml:"files_changed,omitempty"`
 	OutputTail   []string    `yaml:"output_tail,omitempty"`
 	Response     *Response   `yaml:"response,omitempty"`
+	SocketPath   string      `yaml:"socket_path,omitempty"`
 	Error        string      `yaml:"error,omitempty"`
 }
 

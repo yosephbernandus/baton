@@ -30,6 +30,8 @@ func main() {
 		cmd.NewRespondCmd(),
 		cmd.NewDeferCmd(),
 		cmd.NewEscalateCmd(),
+		cmd.NewGuideCmd(),
+		cmd.NewProgressCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

@@ -182,6 +182,28 @@ func BuildPrompt(s *Spec, projectBrief string) string {
 	return b.String()
 }
 
+func BuildPromptWithProtocol(basePrompt, taskID, taskDir string) string {
+	var b strings.Builder
+	b.WriteString(basePrompt)
+	b.WriteString("\n[COMMUNICATION PROTOCOL]\n")
+	b.WriteString("Report progress by printing these exact markers to stdout:\n\n")
+	b.WriteString("  BATON:H:what you are doing          (heartbeat — every 60 seconds)\n")
+	b.WriteString("  BATON:P:30:implementing auth        (progress — percent:description)\n")
+	b.WriteString("  BATON:S:your specific question      (stuck — when blocked)\n")
+	b.WriteString("  BATON:E:what failed                 (error — when something breaks)\n")
+	b.WriteString("  BATON:M:what you completed          (milestone — subtask done)\n\n")
+	b.WriteString("When stuck, print BATON:S:your question and wait up to 60 seconds.\n")
+	b.WriteString("Check ")
+	b.WriteString(taskDir)
+	b.WriteString("/inbox.ndjson for guidance.\n")
+	b.WriteString("If guidance arrives, follow it and continue working.\n")
+	b.WriteString("If no guidance arrives within 60 seconds, exit with code 10.\n\n")
+	b.WriteString("Do NOT exit with an error if you can ask for help first.\n")
+	b.WriteString("Print BATON:S, wait for guidance, then proceed.\n")
+
+	return b.String()
+}
+
 func BuildPromptWithResponse(s *Spec, projectBrief, clarification, answer, reason string) string {
 	base := BuildPrompt(s, projectBrief)
 

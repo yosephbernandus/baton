@@ -54,6 +54,8 @@ type taskState struct {
 	Output       []string
 	Clarify      string
 	DispatchedBy string
+	Progress     string
+	Stuck        bool
 }
 
 type Model struct {
@@ -237,6 +239,18 @@ func (m *Model) processEvent(ev events.Event) {
 		t.Status = "pending"
 	case "task_redispatched":
 		t.Status = "running"
+	case "worker_heartbeat", "worker_progress", "worker_milestone":
+		if msg, ok := ev.Data["msg"].(string); ok {
+			t.Progress = msg
+		}
+		t.Stuck = false
+	case "worker_stuck", "worker_error":
+		if msg, ok := ev.Data["msg"].(string); ok {
+			t.Progress = msg
+		}
+		t.Stuck = true
+	case "guidance_sent":
+		t.Stuck = false
 	}
 }
 
@@ -287,6 +301,16 @@ func (m *Model) styledStatus(t *taskState) string {
 	case "completed":
 		return statusCompleted.Render("● completed")
 	case "running":
+		if t.Stuck {
+			return statusClarify.Render("⚠ stuck")
+		}
+		if t.Progress != "" {
+			msg := t.Progress
+			if len(msg) > 18 {
+				msg = msg[:18]
+			}
+			return statusRunning.Render("◉ " + msg)
+		}
 		return statusRunning.Render("◉ running")
 	case "failed":
 		return statusFailed.Render("✗ failed")
