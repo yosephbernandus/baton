@@ -19,7 +19,8 @@ builds:
     binary: baton
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
 
@@ -40,3 +41,4 @@ release:
     name: baton
   draft: false
   prerelease: auto
+  mode: replace
