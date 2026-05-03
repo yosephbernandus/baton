@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yosephbernandus/baton/internal/config"
@@ -18,6 +19,21 @@ import (
 	"github.com/yosephbernandus/baton/internal/spec"
 	"github.com/yosephbernandus/baton/internal/task"
 )
+
+// cancel reason constants for the watchdog goroutine
+const (
+	cancelNone            int32 = iota
+	cancelSilenceTimeout
+	cancelAbsoluteTimeout
+)
+
+// LivenessConfig controls how the runner detects and handles unresponsive workers.
+type LivenessConfig struct {
+	SilenceTimeout  time.Duration
+	AbsoluteTimeout time.Duration
+	SilenceWarning  time.Duration
+	TickInterval    time.Duration // how often watchdog checks; 0 defaults to 30s
+}
 
 type Result struct {
 	Status        string
@@ -43,11 +59,16 @@ func New(cfg *config.Config, emitter *events.Emitter, store *task.Store) *Runner
 	return &Runner{cfg: cfg, emitter: emitter, store: store, procs: make(map[string]*exec.Cmd)}
 }
 
-func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt string, s *spec.Spec, timeout time.Duration) (*Result, error) {
+func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt string, s *spec.Spec, liveness LivenessConfig) (*Result, error) {
 	rt, ok := r.cfg.Runtimes[runtimeName]
 	if !ok {
 		return nil, fmt.Errorf("runtime %q not found", runtimeName)
 	}
+
+	// Create an internal cancellable context; the caller's ctx is still
+	// respected for external cancellation (e.g. kill command).
+	innerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	taskDir := fmt.Sprintf(".baton/tasks/%s", taskID)
 	_ = os.MkdirAll(taskDir, 0o755)
@@ -56,7 +77,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		_ = os.WriteFile(inboxPath, nil, 0o644)
 	}
 
-	cmd := r.buildCommand(ctx, &rt, model, prompt, s)
+	cmd := r.buildCommand(innerCtx, &rt, model, prompt, s)
 
 	_ = r.emitter.TaskEvent(taskID, runtimeName, model, r.cfg.Orchestrator.Runtime+"/"+r.cfg.Orchestrator.Model, "task_started", map[string]interface{}{
 		"attempt": 1,
@@ -90,10 +111,74 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 	sockPath := fmt.Sprintf(".baton/tasks/%s/baton.sock", taskID)
 	srv, srvErr := socket.NewServer(sockPath)
 	if srvErr == nil {
-		go srv.Accept(ctx)
-		go r.handleIncoming(ctx, taskID, runtimeName, model, srv)
+		go srv.Accept(innerCtx)
+		go r.handleIncoming(innerCtx, taskID, runtimeName, model, srv)
 		defer srv.Close()
 	}
+
+	// Liveness tracking atomics
+	var lastActivity atomic.Int64
+	var protocolAware atomic.Bool
+	var isStuck atomic.Bool
+	var cancelReason atomic.Int32
+
+	lastActivity.Store(time.Now().UnixMilli())
+
+	// Watchdog goroutine: checks silence and absolute deadline.
+	go func() {
+		tickInterval := liveness.TickInterval
+		if tickInterval <= 0 {
+			tickInterval = 30 * time.Second
+		}
+		ticker := time.NewTicker(tickInterval)
+		defer ticker.Stop()
+		absoluteTimer := time.NewTimer(liveness.AbsoluteTimeout)
+		defer absoluteTimer.Stop()
+		warned := false
+
+		for {
+			select {
+			case <-innerCtx.Done():
+				return
+			case <-absoluteTimer.C:
+				_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "worker_timeout", map[string]interface{}{
+					"reason": "absolute_timeout",
+				})
+				cancelReason.Store(cancelAbsoluteTimeout)
+				cancel()
+				return
+			case <-ticker.C:
+				if !protocolAware.Load() {
+					// Non-protocol workers rely on absolute_timeout only.
+					continue
+				}
+				if isStuck.Load() {
+					// Worker explicitly waiting for guidance — don't kill.
+					continue
+				}
+				last := time.UnixMilli(lastActivity.Load())
+				silence := time.Since(last)
+				if silence >= liveness.SilenceTimeout {
+					_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "worker_killed", map[string]interface{}{
+						"reason":  "silence_timeout",
+						"silence": silence.Round(time.Second).String(),
+					})
+					cancelReason.Store(cancelSilenceTimeout)
+					cancel()
+					return
+				}
+				if !warned && silence >= liveness.SilenceWarning {
+					warned = true
+					_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "worker_unresponsive", map[string]interface{}{
+						"silence": silence.Round(time.Second).String(),
+					})
+				}
+				if warned && silence < liveness.SilenceWarning {
+					warned = false
+				}
+			}
+		}
+	}()
 
 	var output []string
 	var clarification string
@@ -101,6 +186,10 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 	for scanner.Scan() {
 		line := scanner.Text()
 		output = append(output, line)
+
+		// Any output counts as liveness.
+		lastActivity.Store(time.Now().UnixMilli())
+		isStuck.Store(false)
 
 		_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "output", map[string]interface{}{
 			"stream": "stdout",
@@ -112,6 +201,10 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		}
 
 		if mk, ok := proto.ParseMarker(line); ok {
+			protocolAware.Store(true)
+			if mk.Type == proto.MarkerStuck {
+				isStuck.Store(true)
+			}
 			r.emitMarkerEvent(taskID, runtimeName, model, mk)
 			if srv != nil {
 				_ = srv.Broadcast(proto.MarkerToMessage(mk))
@@ -130,7 +223,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		}
 	}
 
-	status := r.determineStatus(exitCode, clarification, ctx, output)
+	status := r.determineStatus(exitCode, clarification, cancelReason.Load(), output)
 
 	var errorDetail string
 	if status == "failed" && exitCode == 0 {
@@ -219,8 +312,8 @@ func buildArgs(rt *config.RuntimeConfig, model, prompt string, s *spec.Spec) []s
 	return args
 }
 
-func (r *Runner) determineStatus(exitCode int, clarification string, ctx context.Context, output []string) string {
-	if ctx.Err() == context.DeadlineExceeded {
+func (r *Runner) determineStatus(exitCode int, clarification string, reason int32, output []string) string {
+	if reason == cancelSilenceTimeout || reason == cancelAbsoluteTimeout {
 		return "timeout"
 	}
 	if exitCode == r.cfg.ClarifyExit {

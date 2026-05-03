@@ -22,7 +22,9 @@ type Config struct {
 	SpecDir         string                   `yaml:"spec_dir"`
 	LockFile        string                   `yaml:"lock_file"`
 	ProjectBrief    string                   `yaml:"project_brief"`
-	DefaultTimeout  string                   `yaml:"default_timeout"`
+	AbsoluteTimeout string                   `yaml:"default_timeout"` // yaml tag kept as default_timeout for backward compat
+	SilenceTimeout  string                   `yaml:"silence_timeout"`
+	SilenceWarning  string                   `yaml:"silence_warning"`
 	OutputTailLines int                      `yaml:"output_tail_lines"`
 }
 
@@ -139,7 +141,9 @@ func defaultConfig() *Config {
 		SpecDir:        ".baton/specs",
 		LockFile:       ".baton/locks.yaml",
 		ProjectBrief:    ".baton/project-brief.md",
-		DefaultTimeout:  "10m",
+		AbsoluteTimeout: "60m",
+		SilenceTimeout:  "5m",
+		SilenceWarning:  "3m",
 		OutputTailLines: 50,
 	}
 }

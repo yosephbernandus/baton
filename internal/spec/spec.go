@@ -20,6 +20,8 @@ type Spec struct {
 	Examples           []Example     `yaml:"examples"`
 	AcceptanceChecks   []Check       `yaml:"acceptance_checks"`
 	Criticality        string        `yaml:"criticality"`
+	SilenceTimeout     string        `yaml:"silence_timeout,omitempty"`
+	AbsoluteTimeout    string        `yaml:"absolute_timeout,omitempty"`
 }
 
 type RelatedTask struct {

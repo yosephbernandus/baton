@@ -32,6 +32,7 @@ func NewRunCmd() *cobra.Command {
 		contextFiles   string
 		skipValidation bool
 		timeoutFlag    string
+		silenceTimeout string
 		jsonOutput     bool
 		autoRoute      bool
 	)
@@ -143,12 +144,50 @@ func NewRunCmd() *cobra.Command {
 				"spec_summary": truncate(strings.TrimSpace(prompt), 200),
 			})
 
-			timeout, err := time.ParseDuration(timeoutFlag)
-			if err != nil {
-				timeout, _ = time.ParseDuration(cfg.DefaultTimeout)
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
+
+			// Build LivenessConfig: CLI flags > spec overrides > config defaults.
+			absoluteTimeout, err := time.ParseDuration(timeoutFlag)
+			if err != nil {
+				absoluteTimeout, _ = time.ParseDuration(cfg.AbsoluteTimeout)
+			}
+			if absoluteTimeout <= 0 {
+				absoluteTimeout = 60 * time.Minute
+			}
+
+			silenceDur, err := time.ParseDuration(silenceTimeout)
+			if err != nil {
+				silenceDur, _ = time.ParseDuration(cfg.SilenceTimeout)
+			}
+			if silenceDur <= 0 {
+				silenceDur = 5 * time.Minute
+			}
+
+			warningDur, _ := time.ParseDuration(cfg.SilenceWarning)
+			if warningDur <= 0 {
+				warningDur = 3 * time.Minute
+			}
+
+			// Per-spec overrides.
+			if s != nil {
+				if s.AbsoluteTimeout != "" {
+					if d, err := time.ParseDuration(s.AbsoluteTimeout); err == nil && d > 0 {
+						absoluteTimeout = d
+					}
+				}
+				if s.SilenceTimeout != "" {
+					if d, err := time.ParseDuration(s.SilenceTimeout); err == nil && d > 0 {
+						silenceDur = d
+					}
+				}
+			}
+
+			liveness := runner.LivenessConfig{
+				AbsoluteTimeout: absoluteTimeout,
+				SilenceTimeout:  silenceDur,
+				SilenceWarning:  warningDur,
+			}
 
 			lockReg := lock.NewRegistry(cfg.LockFile)
 			if s != nil && len(s.WritesTo) > 0 {
@@ -176,7 +215,7 @@ func NewRunCmd() *cobra.Command {
 			_ = store.Update(t)
 
 			r := runner.New(cfg, emitter, store)
-			result, err := r.Run(ctx, taskID, runtimeName, model, prompt, s, timeout)
+			result, err := r.Run(ctx, taskID, runtimeName, model, prompt, s, liveness)
 
 			if s != nil && len(s.WritesTo) > 0 {
 				_ = lockReg.Release(taskID)
@@ -282,7 +321,7 @@ func NewRunCmd() *cobra.Command {
 				}
 				return exitError(10, "")
 			case "timeout":
-				return exitError(124, "task %s timed out after %s", taskID, timeoutFlag)
+				return exitError(124, "task %s timed out", taskID)
 			default:
 				return exitError(1, "task %s ended with status: %s", taskID, result.Status)
 			}
@@ -296,7 +335,8 @@ func NewRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&taskIDFlag, "task-id", "", "task identifier (default: task-{timestamp})")
 	cmd.Flags().StringVar(&contextFiles, "context-files", "", "comma-separated context files (with --prompt)")
 	cmd.Flags().BoolVar(&skipValidation, "skip-validation", false, "skip spec validation")
-	cmd.Flags().StringVar(&timeoutFlag, "timeout", "60m", "max time before killing worker (backstop)")
+	cmd.Flags().StringVar(&timeoutFlag, "timeout", "", "absolute timeout backstop (default from config)")
+	cmd.Flags().StringVar(&silenceTimeout, "silence-timeout", "", "kill protocol-aware worker after this silence (default from config)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output task record as JSON")
 	cmd.Flags().BoolVar(&autoRoute, "auto-route", false, "auto-select runtime/model from routing rules")
 

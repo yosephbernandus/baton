@@ -23,6 +23,7 @@ type Task struct {
 	StartedAt    *time.Time  `yaml:"started_at,omitempty"`
 	CompletedAt  *time.Time  `yaml:"completed_at,omitempty"`
 	Duration     string      `yaml:"duration,omitempty"`
+	LastActivity *time.Time  `yaml:"last_activity,omitempty"`
 	PID          int         `yaml:"pid,omitempty"`
 	ExitCode     *int        `yaml:"exit_code,omitempty"`
 	FilesChanged []string    `yaml:"files_changed,omitempty"`

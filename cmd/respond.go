@@ -140,15 +140,44 @@ func NewRespondCmd() *cobra.Command {
 				prompt = fmt.Sprintf("Previous attempt asked: %s\nAnswer: %s\nReason: %s\nProceed.", t.Escalation.WorkerClarification, answer, reason)
 			}
 
-			timeout, err := time.ParseDuration(cfg.DefaultTimeout)
-			if err != nil {
-				timeout = 10 * time.Minute
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
+			absoluteTimeout, err := time.ParseDuration(cfg.AbsoluteTimeout)
+			if err != nil || absoluteTimeout <= 0 {
+				absoluteTimeout = 60 * time.Minute
+			}
+			silenceDur, err := time.ParseDuration(cfg.SilenceTimeout)
+			if err != nil || silenceDur <= 0 {
+				silenceDur = 5 * time.Minute
+			}
+			warningDur, err := time.ParseDuration(cfg.SilenceWarning)
+			if err != nil || warningDur <= 0 {
+				warningDur = 3 * time.Minute
+			}
+
+			// Per-spec overrides.
+			if t.Spec != nil {
+				if t.Spec.AbsoluteTimeout != "" {
+					if d, err := time.ParseDuration(t.Spec.AbsoluteTimeout); err == nil && d > 0 {
+						absoluteTimeout = d
+					}
+				}
+				if t.Spec.SilenceTimeout != "" {
+					if d, err := time.ParseDuration(t.Spec.SilenceTimeout); err == nil && d > 0 {
+						silenceDur = d
+					}
+				}
+			}
+
+			liveness := runner.LivenessConfig{
+				AbsoluteTimeout: absoluteTimeout,
+				SilenceTimeout:  silenceDur,
+				SilenceWarning:  warningDur,
+			}
+
 			r := runner.New(cfg, emitter, store)
-			result, err := r.Run(ctx, taskID, t.Runtime, t.Model, prompt, t.Spec, timeout)
+			result, err := r.Run(ctx, taskID, t.Runtime, t.Model, prompt, t.Spec, liveness)
 			if err != nil {
 				t.Status = "failed"
 				t.Error = err.Error()

@@ -12,8 +12,14 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.ClarifyExit != 10 {
 		t.Errorf("expected clarification exit code 10, got %d", cfg.ClarifyExit)
 	}
-	if cfg.DefaultTimeout != "10m" {
-		t.Errorf("expected default timeout 10m, got %s", cfg.DefaultTimeout)
+	if cfg.AbsoluteTimeout != "60m" {
+		t.Errorf("expected absolute timeout 60m, got %s", cfg.AbsoluteTimeout)
+	}
+	if cfg.SilenceTimeout != "5m" {
+		t.Errorf("expected silence timeout 5m, got %s", cfg.SilenceTimeout)
+	}
+	if cfg.SilenceWarning != "3m" {
+		t.Errorf("expected silence warning 3m, got %s", cfg.SilenceWarning)
 	}
 	if len(cfg.ClarifyPatterns) == 0 {
 		t.Error("expected default clarification patterns")
