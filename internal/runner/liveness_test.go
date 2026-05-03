@@ -80,7 +80,9 @@ func TestLiveness_ActiveWorkerNotKilled(t *testing.T) {
 		TickInterval:    100 * time.Millisecond,
 	}
 
-	os.MkdirAll(".baton/tasks/"+taskID, 0o755)
+	if err := os.MkdirAll(".baton/tasks/"+taskID, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	defer os.RemoveAll(".baton/tasks/" + taskID)
 
 	result, err := r.Run(context.Background(), taskID, "mock", "default", script, nil, liveness)
@@ -110,7 +112,9 @@ func TestLiveness_SilentWorkerKilled(t *testing.T) {
 		TickInterval:    100 * time.Millisecond,
 	}
 
-	os.MkdirAll(".baton/tasks/"+taskID, 0o755)
+	if err := os.MkdirAll(".baton/tasks/"+taskID, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	defer os.RemoveAll(".baton/tasks/" + taskID)
 
 	start := time.Now()
@@ -146,7 +150,9 @@ func TestLiveness_NonProtocolUsesAbsoluteTimeout(t *testing.T) {
 		TickInterval:    100 * time.Millisecond,
 	}
 
-	os.MkdirAll(".baton/tasks/"+taskID, 0o755)
+	if err := os.MkdirAll(".baton/tasks/"+taskID, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	defer os.RemoveAll(".baton/tasks/" + taskID)
 
 	start := time.Now()
@@ -182,7 +188,9 @@ func TestLiveness_StuckWorkerNotKilled(t *testing.T) {
 		TickInterval:    100 * time.Millisecond,
 	}
 
-	os.MkdirAll(".baton/tasks/"+taskID, 0o755)
+	if err := os.MkdirAll(".baton/tasks/"+taskID, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	defer os.RemoveAll(".baton/tasks/" + taskID)
 
 	result, err := r.Run(context.Background(), taskID, "mock", "default", script, nil, liveness)
