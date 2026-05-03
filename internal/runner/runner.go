@@ -101,6 +101,12 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 	r.procs[taskID] = cmd
 	r.mu.Unlock()
 
+	// Kill entire process group on cancel so orphaned children release the pipe.
+	go func() {
+		<-innerCtx.Done()
+		killProcessGroup(cmd)
+	}()
+
 	if cmd.Process != nil {
 		if t, err := r.store.Get(taskID); err == nil {
 			t.PID = cmd.Process.Pid
@@ -446,9 +452,7 @@ func (r *Runner) handleIncoming(ctx context.Context, taskID, runtimeName, model 
 				r.mu.RLock()
 				cmd := r.procs[taskID]
 				r.mu.RUnlock()
-				if cmd != nil && cmd.Process != nil {
-					_ = cmd.Process.Kill()
-				}
+				killProcessGroup(cmd)
 				_ = srv.Reply(msg, proto.Message{M: "ok", ID: msg.ID})
 			}
 		}
