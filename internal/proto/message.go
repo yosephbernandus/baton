@@ -5,15 +5,12 @@ import (
 )
 
 type Message struct {
-	M      string   `json:"m"`
-	ID     int      `json:"id,omitempty"`
-	Msg    string   `json:"msg,omitempty"`
-	P      int      `json:"p,omitempty"`
-	Detail string   `json:"detail,omitempty"`
-	Dur    string   `json:"dur,omitempty"`
-	Code   int      `json:"code,omitempty"`
-	From   string   `json:"from,omitempty"`
-	Files  []string `json:"files,omitempty"`
+	M      string `json:"m"`
+	ID     int    `json:"id,omitempty"`
+	Msg    string `json:"msg,omitempty"`
+	P      int    `json:"p,omitempty"`
+	Detail string `json:"detail,omitempty"`
+	From   string `json:"from,omitempty"`
 
 	ReplyTo interface{} `json:"-"`
 }

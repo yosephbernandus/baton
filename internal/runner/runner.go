@@ -228,10 +228,9 @@ func (r *Runner) determineStatus(exitCode int, clarification string, ctx context
 	}
 	if exitCode != 0 && clarification != "" {
 		for _, pattern := range r.cfg.ClarifyPatterns {
-			if clarification != "" {
+			if strings.Contains(clarification, pattern) {
 				return "needs_clarification"
 			}
-			_ = pattern
 		}
 	}
 	if exitCode != 0 {

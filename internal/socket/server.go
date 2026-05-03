@@ -119,6 +119,12 @@ func (s *Server) Incoming() <-chan proto.Message {
 	return s.incoming
 }
 
+func (s *Server) ClientCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.clients)
+}
+
 func (s *Server) Reply(msg proto.Message, reply proto.Message) error {
 	if msg.ReplyTo == nil {
 		return nil
@@ -143,6 +149,3 @@ func (s *Server) Close() error {
 	return err
 }
 
-func (s *Server) Path() string {
-	return s.path
-}

@@ -9,6 +9,18 @@ import (
 	"github.com/yosephbernandus/baton/internal/proto"
 )
 
+func waitForClients(t *testing.T, srv *Server, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if srv.ClientCount() >= n {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d client(s), got %d", n, srv.ClientCount())
+}
+
 func TestServerClientRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "test.sock")
@@ -30,8 +42,11 @@ func TestServerClientRoundTrip(t *testing.T) {
 	}
 	defer client.Close()
 
-	// Server broadcasts to client
-	srv.Broadcast(proto.Message{M: "progress", P: 30, Msg: "working"})
+	waitForClients(t, srv, 1)
+
+	if err := srv.Broadcast(proto.Message{M: "progress", P: 30, Msg: "working"}); err != nil {
+		t.Fatal(err)
+	}
 
 	msg, err := client.Receive()
 	if err != nil {
@@ -63,21 +78,24 @@ func TestClientSendServerReceive(t *testing.T) {
 	}
 	defer client.Close()
 
-	// Client sends guidance
-	client.Send(proto.Message{M: "guide", ID: 1, Msg: "use v2", From: "human"})
+	waitForClients(t, srv, 1)
+
+	if err := client.Send(proto.Message{M: "guide", ID: 1, Msg: "use v2", From: "human"}); err != nil {
+		t.Fatal(err)
+	}
 
 	select {
 	case msg := <-srv.Incoming():
 		if msg.M != "guide" || msg.ID != 1 || msg.Msg != "use v2" {
 			t.Errorf("got %+v, want guide id=1 msg='use v2'", msg)
 		}
-		// Reply
-		srv.Reply(msg, proto.Message{M: "ok", ID: 1})
+		if err := srv.Reply(msg, proto.Message{M: "ok", ID: 1}); err != nil {
+			t.Fatal(err)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for incoming message")
 	}
 
-	// Client receives reply
 	reply, err := client.Receive()
 	if err != nil {
 		t.Fatal(err)
@@ -114,10 +132,11 @@ func TestMultipleClients(t *testing.T) {
 	}
 	defer c2.Close()
 
-	// Small delay to let accept goroutines register
-	time.Sleep(50 * time.Millisecond)
+	waitForClients(t, srv, 2)
 
-	srv.Broadcast(proto.Message{M: "stuck", Msg: "help"})
+	if err := srv.Broadcast(proto.Message{M: "stuck", Msg: "help"}); err != nil {
+		t.Fatal(err)
+	}
 
 	msg1, err := c1.Receive()
 	if err != nil {
@@ -154,12 +173,16 @@ func TestStream(t *testing.T) {
 	}
 	defer client.Close()
 
+	waitForClients(t, srv, 1)
+
 	ch := client.Stream(ctx)
 
-	time.Sleep(50 * time.Millisecond)
-
-	srv.Broadcast(proto.Message{M: "heartbeat", Msg: "alive"})
-	srv.Broadcast(proto.Message{M: "progress", P: 50, Msg: "half"})
+	if err := srv.Broadcast(proto.Message{M: "heartbeat", Msg: "alive"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Broadcast(proto.Message{M: "progress", P: 50, Msg: "half"}); err != nil {
+		t.Fatal(err)
+	}
 
 	var received []proto.Message
 	for i := 0; i < 2; i++ {

@@ -88,7 +88,6 @@ func NewResultCmd() *cobra.Command {
 					Spec:          t.Spec,
 					ProjectBrief:  projectBrief,
 					Decisions:     allDecisions,
-					OutputTail:    t.OutputTail,
 				})
 
 				fmt.Printf("CLARIFICATION NEEDED for %s\n", taskID)

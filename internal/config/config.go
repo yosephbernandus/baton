@@ -22,8 +22,6 @@ type Config struct {
 	SpecDir         string                   `yaml:"spec_dir"`
 	LockFile        string                   `yaml:"lock_file"`
 	ProjectBrief    string                   `yaml:"project_brief"`
-	LogMaxSizeMB    int                      `yaml:"log_max_size_mb"`
-	LogKeepCount    int                      `yaml:"log_keep_count"`
 	DefaultTimeout  string                   `yaml:"default_timeout"`
 	OutputTailLines int                      `yaml:"output_tail_lines"`
 }
@@ -34,14 +32,13 @@ type OrchestratorConfig struct {
 }
 
 type RuntimeConfig struct {
-	Command      string   `yaml:"command"`
-	ModelFlag    string   `yaml:"model_flag"`
-	PromptFlag   string   `yaml:"prompt_flag"`
-	ContextFlag  string   `yaml:"context_flag"`
-	ExtraFlags   []string `yaml:"extra_flags"`
+	Command     string   `yaml:"command"`
+	ModelFlag   string   `yaml:"model_flag"`
+	PromptFlag  string   `yaml:"prompt_flag"`
+	ContextFlag string   `yaml:"context_flag"`
+	ExtraFlags  []string `yaml:"extra_flags"`
 	Positional  []string `yaml:"positional"`
-	Workdir      string   `yaml:"workdir"`
-	Models       []string `yaml:"models"`
+	Models      []string `yaml:"models"`
 }
 
 type DefaultsConfig struct {
@@ -50,18 +47,15 @@ type DefaultsConfig struct {
 }
 
 type RoutingConfig struct {
-	Rules              []RoutingRule `yaml:"rules"`
-	CheckpointInterval int           `yaml:"checkpoint_interval"`
-	CriticalReview     string        `yaml:"critical_review"`
+	Rules []RoutingRule `yaml:"rules"`
 }
 
 type RoutingRule struct {
-	Match  map[string]interface{} `yaml:"match"`
-	Action string                 `yaml:"action"`
-	Target string                 `yaml:"target,omitempty"`
-	Runtime string                `yaml:"runtime,omitempty"`
-	Model  string                 `yaml:"model,omitempty"`
-	Reason string                 `yaml:"reason"`
+	Match   map[string]interface{} `yaml:"match"`
+	Action  string                 `yaml:"action"`
+	Runtime string                 `yaml:"runtime,omitempty"`
+	Model   string                 `yaml:"model,omitempty"`
+	Reason  string                 `yaml:"reason"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -144,9 +138,7 @@ func defaultConfig() *Config {
 		ResultDir:      ".baton/results",
 		SpecDir:        ".baton/specs",
 		LockFile:       ".baton/locks.yaml",
-		ProjectBrief:   ".baton/project-brief.md",
-		LogMaxSizeMB:   10,
-		LogKeepCount:   3,
+		ProjectBrief:    ".baton/project-brief.md",
 		DefaultTimeout:  "10m",
 		OutputTailLines: 50,
 	}

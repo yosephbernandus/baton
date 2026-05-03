@@ -12,7 +12,6 @@ type ClarifyContext struct {
 	Spec          *spec.Spec
 	ProjectBrief  string
 	Decisions     []decisions.Record
-	OutputTail    []string
 }
 
 type ClarifyVerdict struct {

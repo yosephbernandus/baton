@@ -45,17 +45,16 @@ var (
 )
 
 type taskState struct {
-	ID           string
-	Runtime      string
-	Model        string
-	Status       string
-	Duration     string
-	StartedAt    time.Time
-	Output       []string
-	Clarify      string
-	DispatchedBy string
-	Progress     string
-	Stuck        bool
+	ID        string
+	Runtime   string
+	Model     string
+	Status    string
+	Duration  string
+	StartedAt time.Time
+	Output    []string
+	Clarify   string
+	Progress  string
+	Stuck     bool
 }
 
 type Model struct {
@@ -192,10 +191,6 @@ func (m *Model) processEvent(ev events.Event) {
 	if ev.Model != "" {
 		t.Model = ev.Model
 	}
-	if ev.DispatchedBy != "" {
-		t.DispatchedBy = ev.DispatchedBy
-	}
-
 	switch ev.EventType {
 	case "task_created":
 		t.Status = "pending"
