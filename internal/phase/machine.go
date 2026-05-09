@@ -3,12 +3,14 @@ package phase
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yosephbernandus/baton/internal/brief"
 	"github.com/yosephbernandus/baton/internal/config"
 	"github.com/yosephbernandus/baton/internal/events"
 	"github.com/yosephbernandus/baton/internal/proto"
+	"github.com/yosephbernandus/baton/internal/role"
 	"github.com/yosephbernandus/baton/internal/runner"
 	"github.com/yosephbernandus/baton/internal/session"
 	"github.com/yosephbernandus/baton/internal/spec"
@@ -305,6 +307,17 @@ func (p *Pipeline) executePhaseWithRetries(
 
 		switch {
 		case completion.Status == "done":
+			if violations := role.VerifyBoundary(ph.Role, runResult.FilesChanged); len(violations) > 0 {
+				var msgs []string
+				for _, v := range violations {
+					msgs = append(msgs, fmt.Sprintf("%s: %s", v.File, v.Reason))
+				}
+				violationMsg := fmt.Sprintf("role boundary violation: %s", strings.Join(msgs, "; "))
+				_ = scratchpad.AppendAttempt(attempt, []string{violationMsg}, "role boundary violated")
+				lastFailReason = fmt.Sprintf("phase %d (%s): %s", ph.ID, ph.Name, violationMsg)
+				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_boundary_violation")
+				continue
+			}
 			prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
 			result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
 			result.AttemptsByPhase[ph.ID] = attempt
@@ -338,6 +351,17 @@ func (p *Pipeline) executePhaseWithRetries(
 
 		default:
 			if runResult.Status == "completed" {
+				if violations := role.VerifyBoundary(ph.Role, runResult.FilesChanged); len(violations) > 0 {
+					var msgs []string
+					for _, v := range violations {
+						msgs = append(msgs, fmt.Sprintf("%s: %s", v.File, v.Reason))
+					}
+					violationMsg := fmt.Sprintf("role boundary violation: %s", strings.Join(msgs, "; "))
+					_ = scratchpad.AppendAttempt(attempt, []string{violationMsg}, "role boundary violated")
+					lastFailReason = fmt.Sprintf("phase %d (%s): %s", ph.ID, ph.Name, violationMsg)
+					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_boundary_violation")
+					continue
+				}
 				prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
 				result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
 				result.AttemptsByPhase[ph.ID] = attempt

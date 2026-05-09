@@ -3,6 +3,8 @@ package phase
 import (
 	"fmt"
 	"strings"
+
+	"github.com/yosephbernandus/baton/internal/role"
 )
 
 var phaseDescriptions = map[string]string{
@@ -43,8 +45,13 @@ func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhase
 
 	if desc, ok := roleDescriptions[ph.Role]; ok {
 		b.WriteString(desc)
-		b.WriteString("\n\n")
+		b.WriteString("\n")
 	}
+	if boundary := role.BoundaryText(ph.Role); boundary != "" {
+		b.WriteString(boundary)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 
 	if desc, ok := phaseDescriptions[ph.Name]; ok {
 		fmt.Fprintf(&b, "Objective: %s\n\n", desc)

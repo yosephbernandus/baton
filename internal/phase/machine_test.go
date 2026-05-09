@@ -559,3 +559,134 @@ func TestPipelineL2NoLoopForNonVerification(t *testing.T) {
 		t.Errorf("L2Cycles=%d, want 0 (no L2 for non-verification phase)", result.L2Cycles)
 	}
 }
+
+func TestPipelineBoundaryViolationRetry(t *testing.T) {
+	// Reviewer (phase 10, domain_compliance) modifies a file → violation → retry
+	// SMALL active: 1,2,3,4,8,10,12,13,14,15,16
+	var results []*runner.Result
+	var errs []error
+
+	// Phases 1-4 pass
+	for _, name := range []string{"setup", "triage", "discovery", "skill_discovery"} {
+		results = append(results, &runner.Result{
+			Status: "completed",
+			Output: []string{fmt.Sprintf("BATON:C:%s:done", name)},
+		})
+		errs = append(errs, nil)
+	}
+
+	// Implementation passes
+	results = append(results, &runner.Result{
+		Status: "completed",
+		Output: []string{"BATON:C:implementation:done"},
+	})
+	errs = append(errs, nil)
+
+	// Domain compliance (reviewer) — first attempt modifies file = violation
+	results = append(results, &runner.Result{
+		Status:       "completed",
+		Output:       []string{"BATON:C:domain_compliance:done"},
+		FilesChanged: []string{"internal/config/config.go"}, // violation!
+	})
+	errs = append(errs, nil)
+
+	// Retry — no files changed = passes
+	results = append(results, &runner.Result{
+		Status: "completed",
+		Output: []string{"BATON:C:domain_compliance:done"},
+	})
+	errs = append(errs, nil)
+
+	// Rest pass
+	for _, name := range []string{"test_planning", "testing", "coverage_verification", "test_quality", "completion"} {
+		results = append(results, &runner.Result{
+			Status: "completed",
+			Output: []string{fmt.Sprintf("BATON:C:%s:done", name)},
+		})
+		errs = append(errs, nil)
+	}
+
+	mr := &mockRunner{results: results, errors: errs}
+
+	cfg := testConfig(2)
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexitySmall})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed. Reason: %s", result.Status, result.FailReason)
+	}
+	// Phase 10 should have taken 2 attempts (1 violation + 1 pass)
+	if result.AttemptsByPhase[10] != 2 {
+		t.Errorf("phase 10 attempts=%d, want 2", result.AttemptsByPhase[10])
+	}
+}
+
+func TestPipelineBoundaryViolationTester(t *testing.T) {
+	// Tester (phase 13) modifies production file → violation
+	var results []*runner.Result
+	var errs []error
+
+	// Phases 1-4 pass
+	for _, name := range []string{"setup", "triage", "discovery", "skill_discovery"} {
+		results = append(results, &runner.Result{
+			Status: "completed",
+			Output: []string{fmt.Sprintf("BATON:C:%s:done", name)},
+		})
+		errs = append(errs, nil)
+	}
+
+	// Impl, domain_compliance, test_planning pass
+	for _, name := range []string{"implementation", "domain_compliance", "test_planning"} {
+		results = append(results, &runner.Result{
+			Status: "completed",
+			Output: []string{fmt.Sprintf("BATON:C:%s:done", name)},
+		})
+		errs = append(errs, nil)
+	}
+
+	// Testing — modifies production file (violation)
+	results = append(results, &runner.Result{
+		Status:       "completed",
+		Output:       []string{"BATON:C:testing:done"},
+		FilesChanged: []string{"internal/phase/machine.go"}, // not a test file
+	})
+	errs = append(errs, nil)
+
+	// Testing retry — only test files
+	results = append(results, &runner.Result{
+		Status:       "completed",
+		Output:       []string{"BATON:C:testing:done"},
+		FilesChanged: []string{"internal/phase/machine_test.go"},
+	})
+	errs = append(errs, nil)
+
+	// Rest pass
+	for _, name := range []string{"coverage_verification", "test_quality", "completion"} {
+		results = append(results, &runner.Result{
+			Status: "completed",
+			Output: []string{fmt.Sprintf("BATON:C:%s:done", name)},
+		})
+		errs = append(errs, nil)
+	}
+
+	mr := &mockRunner{results: results, errors: errs}
+
+	cfg := testConfig(2)
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexitySmall})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed. Reason: %s", result.Status, result.FailReason)
+	}
+	if result.AttemptsByPhase[13] != 2 {
+		t.Errorf("phase 13 attempts=%d, want 2", result.AttemptsByPhase[13])
+	}
+}
