@@ -14,6 +14,7 @@ import (
 	"github.com/yosephbernandus/baton/internal/events"
 	"github.com/yosephbernandus/baton/internal/phase"
 	"github.com/yosephbernandus/baton/internal/runner"
+	"github.com/yosephbernandus/baton/internal/session"
 	"github.com/yosephbernandus/baton/internal/spec"
 	"github.com/yosephbernandus/baton/internal/task"
 )
@@ -80,6 +81,11 @@ func newPipelineRunCmd() *cobra.Command {
 			p := phase.NewPipeline(cfg, r, store, emitter, s, specID, phase.PipelineConfig{
 				Complexity: complexity,
 			})
+
+			manifestPath := filepath.Join(".baton", "session.yaml")
+			sessionID := fmt.Sprintf("%s-%d", specID, time.Now().Unix())
+			manifest := session.New(sessionID, specPath, complexity)
+			p.SetManifest(manifest, manifestPath)
 
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 			defer cancel()

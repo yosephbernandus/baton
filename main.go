@@ -33,6 +33,7 @@ func main() {
 		cmd.NewGuideCmd(),
 		cmd.NewProgressCmd(),
 		cmd.NewPipelineCmd(),
+		cmd.NewSessionCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

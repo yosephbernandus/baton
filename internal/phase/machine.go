@@ -10,6 +10,7 @@ import (
 	"github.com/yosephbernandus/baton/internal/events"
 	"github.com/yosephbernandus/baton/internal/proto"
 	"github.com/yosephbernandus/baton/internal/runner"
+	"github.com/yosephbernandus/baton/internal/session"
 	"github.com/yosephbernandus/baton/internal/spec"
 	"github.com/yosephbernandus/baton/internal/task"
 )
@@ -35,14 +36,16 @@ type PipelineResult struct {
 }
 
 type Pipeline struct {
-	config  PipelineConfig
-	phases  []Phase
-	runner  PhaseRunner
-	cfg     *config.Config
-	spec    *spec.Spec
-	store   *task.Store
-	emitter *events.Emitter
-	specID  string
+	config       PipelineConfig
+	phases       []Phase
+	runner       PhaseRunner
+	cfg          *config.Config
+	spec         *spec.Spec
+	store        *task.Store
+	emitter      *events.Emitter
+	specID       string
+	manifest     *session.Manifest
+	manifestPath string
 }
 
 func NewPipeline(cfg *config.Config, r PhaseRunner, store *task.Store,
@@ -59,6 +62,11 @@ func NewPipeline(cfg *config.Config, r PhaseRunner, store *task.Store,
 	}
 }
 
+func (p *Pipeline) SetManifest(m *session.Manifest, path string) {
+	p.manifest = m
+	p.manifestPath = path
+}
+
 func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 	start := time.Now()
 	active := ActivePhases(p.phases, p.config.Complexity)
@@ -70,6 +78,11 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 	result := &PipelineResult{
 		PhasesSkipped:   skipped,
 		AttemptsByPhase: make(map[int]int),
+	}
+
+	if p.manifest != nil {
+		p.manifest.SetSkipped(skipped)
+		p.saveManifest()
 	}
 
 	projectBrief := brief.Load(p.cfg.ProjectBrief)
@@ -96,6 +109,10 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 
 		switch phaseOutcome {
 		case outcomeCompleted:
+			if p.manifest != nil {
+				p.manifest.AdvancePhase(ph.ID)
+				p.saveManifest()
+			}
 			i++
 
 		case outcomeCancelled:
@@ -106,6 +123,7 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 
 		case outcomeBlocked:
 			result.Duration = time.Since(start)
+			p.saveManifestStatus("failed")
 			return result, nil
 
 		case outcomeFailed:
@@ -113,7 +131,6 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 				l2Cycles++
 				result.L2Cycles = l2Cycles
 
-				// Inject verification failure into implementation scratchpad
 				implTaskID := fmt.Sprintf("%s-phase-%d", p.specID, L2StartPhase)
 				implScratchpad := NewScratchpad(p.cfg.TaskDir, implTaskID)
 				_ = implScratchpad.AppendAttempt(0, []string{
@@ -123,7 +140,6 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 
 				p.emitL2Event(ph, l2Cycles, failReason)
 
-				// Jump back to implementation phase
 				implIdx := -1
 				for j, ap := range active {
 					if ap.ID == L2StartPhase {
@@ -137,18 +153,24 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 					result.FailedPhase = &failID
 					result.FailReason = fmt.Sprintf("%s (no implementation phase to loop back to)", failReason)
 					result.Duration = time.Since(start)
+					p.saveManifestStatus("failed")
 					return result, nil
+				}
+				if p.manifest != nil {
+					p.manifest.RecordL2Cycle()
+					p.manifest.LoopBackTo(L2StartPhase)
+					p.saveManifest()
 				}
 				i = implIdx
 				continue
 			}
 
-			// No L2 cycles left or not a verification phase
 			result.Status = "failed"
 			result.Duration = time.Since(start)
 			if l2Cycles >= maxL2 && IsVerificationPhase(ph.ID) {
 				result.FailReason = fmt.Sprintf("%s (L2 cycles exhausted: %d/%d)", failReason, l2Cycles, maxL2)
 			}
+			p.saveManifestStatus("failed")
 			return result, nil
 
 		case outcomeStuck:
@@ -178,7 +200,13 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 					result.FailedPhase = &failID
 					result.FailReason = failReason
 					result.Duration = time.Since(start)
+					p.saveManifestStatus("failed")
 					return result, nil
+				}
+				if p.manifest != nil {
+					p.manifest.RecordL2Cycle()
+					p.manifest.LoopBackTo(L2StartPhase)
+					p.saveManifest()
 				}
 				i = implIdx
 				continue
@@ -186,12 +214,14 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 
 			result.Status = "failed"
 			result.Duration = time.Since(start)
+			p.saveManifestStatus("failed")
 			return result, nil
 		}
 	}
 
 	result.Status = "completed"
 	result.Duration = time.Since(start)
+	p.saveManifestStatus("completed")
 	return result, nil
 }
 
@@ -239,6 +269,10 @@ func (p *Pipeline) executePhaseWithRetries(
 		if attempt == 1 {
 			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_started")
 		} else {
+			if p.manifest != nil {
+				p.manifest.RecordL1Retry()
+				p.saveManifest()
+			}
 			p.emitPhaseRetryEvent(taskID, runtimeName, model, ph, attempt)
 		}
 
@@ -339,6 +373,25 @@ func (p *Pipeline) executePhaseWithRetries(
 }
 
 func intPtr(i int) *int { return &i }
+
+func (p *Pipeline) saveManifest() {
+	if p.manifest != nil && p.manifestPath != "" {
+		_ = p.manifest.Save(p.manifestPath)
+	}
+}
+
+func (p *Pipeline) saveManifestStatus(status string) {
+	if p.manifest == nil {
+		return
+	}
+	switch status {
+	case "completed":
+		p.manifest.MarkCompleted()
+	case "failed":
+		p.manifest.MarkFailed("")
+	}
+	p.saveManifest()
+}
 
 func (p *Pipeline) newLoopDetector() *LoopDetector {
 	if p.cfg.PhaseMachine.LoopDetectionEnabled != nil && !*p.cfg.PhaseMachine.LoopDetectionEnabled {
