@@ -29,6 +29,16 @@ type Config struct {
 	PhaseMachine    PhaseMachineConfig       `yaml:"phase_machine"`
 	RoleModels      map[string]RoleModelConfig `yaml:"role_models"`
 	Skills          SkillsConfig               `yaml:"skills"`
+	Advisor         AdvisorConfig              `yaml:"escalation_advisor"`
+}
+
+type AdvisorConfig struct {
+	Enabled            bool   `yaml:"enabled"`
+	Runtime            string `yaml:"runtime"`
+	Model              string `yaml:"model"`
+	MaxCallsPerSession int    `yaml:"max_calls_per_session"`
+	MaxCallsPerTask    int    `yaml:"max_calls_per_task"`
+	Timeout            string `yaml:"timeout"`
 }
 
 type SkillsConfig struct {

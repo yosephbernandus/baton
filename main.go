@@ -34,6 +34,7 @@ func main() {
 		cmd.NewProgressCmd(),
 		cmd.NewPipelineCmd(),
 		cmd.NewSessionCmd(),
+		cmd.NewAdviseCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

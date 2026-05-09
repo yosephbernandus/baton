@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yosephbernandus/baton/internal/advisor"
 	"github.com/yosephbernandus/baton/internal/brief"
 	"github.com/yosephbernandus/baton/internal/config"
 	"github.com/yosephbernandus/baton/internal/events"
@@ -50,6 +51,7 @@ type Pipeline struct {
 	specID       string
 	manifest     *session.Manifest
 	manifestPath string
+	advisor      *advisor.Advisor
 }
 
 func NewPipeline(cfg *config.Config, r PhaseRunner, store *task.Store,
@@ -69,6 +71,10 @@ func NewPipeline(cfg *config.Config, r PhaseRunner, store *task.Store,
 func (p *Pipeline) SetManifest(m *session.Manifest, path string) {
 	p.manifest = m
 	p.manifestPath = path
+}
+
+func (p *Pipeline) SetAdvisor(a *advisor.Advisor) {
+	p.advisor = a
 }
 
 func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
@@ -421,7 +427,37 @@ func (p *Pipeline) executePhaseWithRetries(
 		}
 	}
 
-	// All retries exhausted
+	// All retries exhausted — consult advisor if available
+	if p.advisor != nil {
+		advisorResp := p.consultAdvisor(ctx, taskID, ph, scratchpad, result, loopDetector != nil && loopDetector.IsStuck())
+		if advisorResp != nil && advisorResp.Action == advisor.ActionRetryWithHint {
+			_ = scratchpad.AppendAttempt(0, []string{
+				fmt.Sprintf("[ADVISOR HINT] %s", advisorResp.Detail),
+			}, "advisor suggested retry with hint")
+
+			scratchpadContent := scratchpad.ForPrompt()
+			phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, prevOutputs, scratchpadContent, result.DirtyFiles)
+			phasePrompt = spec.BuildPromptWithProtocol(phasePrompt, taskID, p.cfg.TaskDir)
+			liveness := p.buildLiveness()
+
+			p.emitPhaseRetryEvent(taskID, runtimeName, model, ph, totalAttempts+1)
+			runResult, err := p.runner.Run(ctx, taskID, runtimeName, model, phasePrompt, p.spec, liveness, toolRestrictionFlags...)
+			if err == nil {
+				completion := extractCompletion(runResult.Output, ph.CompletionSignal)
+				if completion.Status == "done" || runResult.Status == "completed" {
+					prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
+					if len(runResult.FilesChanged) > 0 {
+						result.DirtyFiles[ph.ID] = runResult.FilesChanged
+					}
+					result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
+					result.AttemptsByPhase[ph.ID] = totalAttempts + 1
+					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
+					return outcomeCompleted, ""
+				}
+			}
+		}
+	}
+
 	result.FailedPhase = intPtr(ph.ID)
 	result.FailReason = fmt.Sprintf("%s (after %d attempts)", lastFailReason, totalAttempts)
 	result.AttemptsByPhase[ph.ID] = totalAttempts
@@ -458,6 +494,58 @@ func (p *Pipeline) newLoopDetector() *LoopDetector {
 	threshold := p.cfg.PhaseMachine.LoopThreshold
 	tailLines := p.cfg.PhaseMachine.LoopTailLines
 	return NewLoopDetector(window, threshold, tailLines)
+}
+
+func (p *Pipeline) consultAdvisor(ctx context.Context, taskID string, ph Phase, scratchpad *Scratchpad, result *PipelineResult, loopDetected bool) *advisor.Response {
+	if p.advisor == nil {
+		return nil
+	}
+
+	scratchpadContent, _ := scratchpad.Read()
+
+	var filesChanged []string
+	for _, files := range result.DirtyFiles {
+		filesChanged = append(filesChanged, files...)
+	}
+
+	specSummary := ""
+	if p.spec != nil {
+		specSummary = fmt.Sprintf("What: %s\nWhy: %s", p.spec.What, p.spec.Why)
+	}
+
+	req := advisor.Request{
+		Spec:         specSummary,
+		Scratchpad:   scratchpadContent,
+		Phase:        ph.ID,
+		PhaseName:    ph.Name,
+		Role:         ph.Role,
+		L1Attempts:   result.AttemptsByPhase[ph.ID],
+		L2Cycles:     result.L2Cycles,
+		LoopDetected: loopDetected,
+		FilesChanged: filesChanged,
+	}
+
+	resp, err := p.advisor.Consult(ctx, taskID, req)
+	if err != nil {
+		return nil
+	}
+
+	p.emitAdvisorEvent(taskID, ph, resp)
+	return resp
+}
+
+func (p *Pipeline) emitAdvisorEvent(taskID string, ph Phase, resp *advisor.Response) {
+	if p.emitter == nil {
+		return
+	}
+	_ = p.emitter.TaskEvent(taskID, "", "", "baton-pipeline", "advisor_consulted",
+		map[string]interface{}{
+			"phase_id":   ph.ID,
+			"phase_name": ph.Name,
+			"action":     resp.Action,
+			"confidence": resp.Confidence,
+			"detail":     resp.Detail,
+		})
 }
 
 func (p *Pipeline) loadSkillContext() string {
