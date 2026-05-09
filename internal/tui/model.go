@@ -389,7 +389,6 @@ func (m *Model) View() string {
 		m.dividerRow = lineCount
 		b.WriteString(m.renderDivider())
 		b.WriteString("\n")
-		lineCount++
 
 		b.WriteString(m.renderOutput())
 		b.WriteString("\n")
