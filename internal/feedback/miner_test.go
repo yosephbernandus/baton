@@ -18,8 +18,8 @@ func writeEvents(t *testing.T, dir string, events []rawEvent) string {
 	defer f.Close()
 	for _, ev := range events {
 		data, _ := json.Marshal(ev)
-		f.Write(data)
-		f.WriteString("\n")
+		_, _ = f.Write(data)
+		_, _ = f.WriteString("\n")
 	}
 	return path
 }
