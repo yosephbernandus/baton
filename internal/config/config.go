@@ -51,9 +51,13 @@ type DefaultsConfig struct {
 }
 
 type PhaseMachineConfig struct {
-	Enabled           bool   `yaml:"enabled"`
-	ComplexityDefault string `yaml:"complexity_default"`
-	MaxL1Retries      int    `yaml:"max_l1_retries"`
+	Enabled              bool    `yaml:"enabled"`
+	ComplexityDefault    string  `yaml:"complexity_default"`
+	MaxL1Retries         int     `yaml:"max_l1_retries"`
+	LoopDetectionEnabled *bool   `yaml:"loop_detection_enabled,omitempty"`
+	LoopWindowSize       int     `yaml:"loop_window_size"`
+	LoopThreshold        float64 `yaml:"loop_similarity_threshold"`
+	LoopTailLines        int     `yaml:"loop_tail_lines"`
 }
 
 type RoleModelConfig struct {

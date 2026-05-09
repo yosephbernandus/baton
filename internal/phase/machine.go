@@ -88,8 +88,10 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 		runtimeName, model := p.resolveRoleRuntime(ph.Role)
 		taskID := fmt.Sprintf("%s-phase-%d", p.specID, ph.ID)
 		scratchpad := NewScratchpad(p.cfg.TaskDir, taskID)
+		loopDetector := p.newLoopDetector()
 
 		var phaseCompleted bool
+		var loopDetected bool
 		var lastFailReason string
 		totalAttempts := maxRetries + 1
 
@@ -118,11 +120,20 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 			runResult, err := p.runner.Run(ctx, taskID, runtimeName, model, phasePrompt, p.spec, liveness)
 			if err != nil {
 				var notes []string
+				var output []string
 				if runResult != nil {
 					notes = extractNotes(runResult.Output)
+					output = runResult.Output
 				}
 				_ = scratchpad.AppendAttempt(attempt, notes, fmt.Sprintf("runner error: %v", err))
 				lastFailReason = fmt.Sprintf("phase %d (%s) runner error: %v", ph.ID, ph.Name, err)
+				if loopDetector != nil {
+					loopDetector.Record(output)
+					if loopDetector.IsStuck() {
+						loopDetected = true
+						break
+					}
+				}
 				continue
 			}
 
@@ -140,6 +151,12 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 				notes := extractNotes(runResult.Output)
 				_ = scratchpad.AppendAttempt(attempt, notes, completion.Detail)
 				lastFailReason = fmt.Sprintf("phase %d (%s): %s", ph.ID, ph.Name, completion.Detail)
+				if loopDetector != nil {
+					loopDetector.Record(runResult.Output)
+					if loopDetector.IsStuck() {
+						loopDetected = true
+					}
+				}
 
 			case completion.Status == "blocked":
 				result.Status = "blocked"
@@ -164,10 +181,16 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 						fmt.Sprintf("worker exited with status %s, no completion promise", runResult.Status))
 					lastFailReason = fmt.Sprintf("phase %d (%s): worker exited with status %s, no completion promise",
 						ph.ID, ph.Name, runResult.Status)
+					if loopDetector != nil {
+						loopDetector.Record(runResult.Output)
+						if loopDetector.IsStuck() {
+							loopDetected = true
+						}
+					}
 				}
 			}
 
-			if phaseCompleted {
+			if phaseCompleted || loopDetected {
 				break
 			}
 		}
@@ -176,10 +199,17 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 			result.Status = "failed"
 			failID := ph.ID
 			result.FailedPhase = &failID
-			result.FailReason = fmt.Sprintf("%s (after %d attempts)", lastFailReason, totalAttempts)
+			if loopDetected {
+				_ = scratchpad.AppendAttempt(0, nil,
+					"[LOOP DETECTED] Worker produced identical output across attempts. This approach is fundamentally stuck.")
+				result.FailReason = fmt.Sprintf("%s (loop detected — worker stuck)", lastFailReason)
+				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_stuck")
+			} else {
+				result.FailReason = fmt.Sprintf("%s (after %d attempts)", lastFailReason, totalAttempts)
+				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_failed")
+			}
 			result.Duration = time.Since(start)
 			result.AttemptsByPhase[ph.ID] = totalAttempts
-			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_failed")
 			return result, nil
 		}
 	}
@@ -187,6 +217,17 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 	result.Status = "completed"
 	result.Duration = time.Since(start)
 	return result, nil
+}
+
+func (p *Pipeline) newLoopDetector() *LoopDetector {
+	// Disabled if explicitly set to false
+	if p.cfg.PhaseMachine.LoopDetectionEnabled != nil && !*p.cfg.PhaseMachine.LoopDetectionEnabled {
+		return nil
+	}
+	window := p.cfg.PhaseMachine.LoopWindowSize
+	threshold := p.cfg.PhaseMachine.LoopThreshold
+	tailLines := p.cfg.PhaseMachine.LoopTailLines
+	return NewLoopDetector(window, threshold, tailLines)
 }
 
 func (p *Pipeline) resolveMaxRetries() int {

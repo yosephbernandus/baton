@@ -252,3 +252,96 @@ func TestExtractNotes(t *testing.T) {
 		t.Errorf("notes[1]=%q, want 'Y also failed'", notes[1])
 	}
 }
+
+func TestPipelineLoopDetectionStuck(t *testing.T) {
+	// Same output 3 times → loop detected, stop early
+	sameOutput := []string{
+		"starting build",
+		"error: undefined reference to foo",
+		"BATON:C:setup:fail:build error",
+	}
+	mr := &mockRunner{
+		results: []*runner.Result{
+			{Status: "completed", Output: sameOutput},
+			{Status: "completed", Output: sameOutput},
+			{Status: "completed", Output: sameOutput},
+			{Status: "completed", Output: sameOutput},
+		},
+		errors: make([]error, 4),
+	}
+
+	cfg := testConfig(5) // 6 total attempts, but loop should stop at 3
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexityTrivial})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "failed" {
+		t.Errorf("status=%s, want failed", result.Status)
+	}
+	if !strings.Contains(result.FailReason, "loop detected") {
+		t.Errorf("fail reason=%q, want 'loop detected'", result.FailReason)
+	}
+	// Should have stopped at 3 attempts (window=3), not 6
+	if mr.calls > 3 {
+		t.Errorf("runner calls=%d, want <=3 (loop should stop early)", mr.calls)
+	}
+}
+
+func TestPipelineLoopDetectionNotTriggered(t *testing.T) {
+	// Different outputs each time → no loop detection
+	mr := &mockRunner{
+		results: []*runner.Result{
+			{Status: "completed", Output: []string{"attempt 1 output", "BATON:C:setup:fail:error1"}},
+			{Status: "completed", Output: []string{"attempt 2 different", "BATON:C:setup:fail:error2"}},
+			{Status: "completed", Output: []string{"attempt 3 unique", "BATON:C:setup:done"}},
+			{Status: "completed", Output: []string{"BATON:C:implementation:done"}},
+			{Status: "completed", Output: []string{"BATON:C:completion:done"}},
+		},
+		errors: make([]error, 5),
+	}
+
+	cfg := testConfig(3)
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexityTrivial})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Errorf("status=%s, want completed", result.Status)
+	}
+}
+
+func TestPipelineLoopDetectionDisabled(t *testing.T) {
+	sameOutput := []string{"same error every time", "BATON:C:setup:fail:error"}
+	mr := &mockRunner{
+		results: []*runner.Result{
+			{Status: "completed", Output: sameOutput},
+			{Status: "completed", Output: sameOutput},
+			{Status: "completed", Output: sameOutput},
+		},
+		errors: make([]error, 3),
+	}
+
+	cfg := testConfig(2)
+	cfg.TaskDir = t.TempDir()
+	disabled := false
+	cfg.PhaseMachine.LoopDetectionEnabled = &disabled
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexityTrivial})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "failed" {
+		t.Errorf("status=%s, want failed", result.Status)
+	}
+	// Should exhaust all retries without loop detection
+	if !strings.Contains(result.FailReason, "after 3 attempts") {
+		t.Errorf("fail reason=%q, want 'after 3 attempts' (no loop detection)", result.FailReason)
+	}
+}
