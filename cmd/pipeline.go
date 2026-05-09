@@ -107,6 +107,11 @@ func newPipelineRunCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "Failed at: phase %d\n", *result.FailedPhase)
 				fmt.Fprintf(os.Stderr, "Reason:    %s\n", result.FailReason)
 			}
+			for phaseID, attempts := range result.AttemptsByPhase {
+				if attempts > 1 {
+					fmt.Fprintf(os.Stderr, "  Phase %d: %d attempts\n", phaseID, attempts)
+				}
+			}
 
 			_ = start // used via result.Duration
 

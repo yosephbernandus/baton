@@ -32,7 +32,7 @@ var roleDescriptions = map[string]string{
 	RoleTester:    "You are the TESTER. You write and run tests. You MUST NOT modify production code, only test files.",
 }
 
-func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhases int, prevOutputs map[int]string) string {
+func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhases int, prevOutputs map[int]string, scratchpadContent string) string {
 	var b strings.Builder
 
 	b.WriteString(basePrompt)
@@ -58,12 +58,19 @@ func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhase
 		b.WriteString("\n")
 	}
 
+	if scratchpadContent != "" {
+		b.WriteString(scratchpadContent)
+		b.WriteString("\n")
+	}
+
 	b.WriteString("[COMPLETION]\n")
 	fmt.Fprintf(&b, "When done, output exactly one of these markers:\n")
 	fmt.Fprintf(&b, "  BATON:C:%s:done            — phase completed successfully\n", ph.CompletionSignal)
 	fmt.Fprintf(&b, "  BATON:C:%s:fail:<reason>    — phase failed, explain why\n", ph.CompletionSignal)
 	fmt.Fprintf(&b, "  BATON:C:%s:blocked:<reason> — blocked on external dependency\n", ph.CompletionSignal)
 	b.WriteString("\nYou MUST output exactly one completion marker before exiting.\n")
+	b.WriteString("\nTo record notes for future attempts (if this phase is retried):\n")
+	fmt.Fprintf(&b, "  BATON:N:<what you tried and what happened>\n")
 
 	return b.String()
 }

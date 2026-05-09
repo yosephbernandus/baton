@@ -14,6 +14,11 @@ import (
 	"github.com/yosephbernandus/baton/internal/task"
 )
 
+type PhaseRunner interface {
+	Run(ctx context.Context, taskID, runtimeName, model, prompt string,
+		s *spec.Spec, liveness runner.LivenessConfig) (*runner.Result, error)
+}
+
 type PipelineConfig struct {
 	Complexity string
 }
@@ -25,12 +30,13 @@ type PipelineResult struct {
 	FailedPhase     *int
 	FailReason      string
 	Duration        time.Duration
+	AttemptsByPhase map[int]int
 }
 
 type Pipeline struct {
 	config  PipelineConfig
 	phases  []Phase
-	runner  *runner.Runner
+	runner  PhaseRunner
 	cfg     *config.Config
 	spec    *spec.Spec
 	store   *task.Store
@@ -38,7 +44,7 @@ type Pipeline struct {
 	specID  string
 }
 
-func NewPipeline(cfg *config.Config, r *runner.Runner, store *task.Store,
+func NewPipeline(cfg *config.Config, r PhaseRunner, store *task.Store,
 	emitter *events.Emitter, s *spec.Spec, specID string, pcfg PipelineConfig) *Pipeline {
 	return &Pipeline{
 		config:  pcfg,
@@ -57,9 +63,11 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 	active := ActivePhases(p.phases, p.config.Complexity)
 	skipped := SkippedPhaseIDs(p.phases, p.config.Complexity)
 	totalPhases := len(p.phases)
+	maxRetries := p.resolveMaxRetries()
 
 	result := &PipelineResult{
-		PhasesSkipped: skipped,
+		PhasesSkipped:   skipped,
+		AttemptsByPhase: make(map[int]int),
 	}
 
 	projectBrief := brief.Load(p.cfg.ProjectBrief)
@@ -78,74 +86,114 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 		}
 
 		runtimeName, model := p.resolveRoleRuntime(ph.Role)
-
-		phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, prevOutputs)
 		taskID := fmt.Sprintf("%s-phase-%d", p.specID, ph.ID)
+		scratchpad := NewScratchpad(p.cfg.TaskDir, taskID)
 
-		phasePrompt = spec.BuildPromptWithProtocol(phasePrompt, taskID, p.cfg.TaskDir)
+		var phaseCompleted bool
+		var lastFailReason string
+		totalAttempts := maxRetries + 1
 
-		liveness := p.buildLiveness()
-
-		p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_started")
-
-		runResult, err := p.runner.Run(ctx, taskID, runtimeName, model, phasePrompt, p.spec, liveness)
-		if err != nil {
-			result.Status = "failed"
-			failID := ph.ID
-			result.FailedPhase = &failID
-			result.FailReason = fmt.Sprintf("phase %d (%s) runner error: %v", ph.ID, ph.Name, err)
-			result.Duration = time.Since(start)
-			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_failed")
-			return result, nil
-		}
-
-		completion := extractCompletion(runResult.Output, ph.CompletionSignal)
-
-		prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
-
-		switch {
-		case completion.Status == "done":
-			result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
-			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
-
-		case completion.Status == "fail":
-			result.Status = "failed"
-			failID := ph.ID
-			result.FailedPhase = &failID
-			result.FailReason = fmt.Sprintf("phase %d (%s): %s", ph.ID, ph.Name, completion.Detail)
-			result.Duration = time.Since(start)
-			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_failed")
-			return result, nil
-
-		case completion.Status == "blocked":
-			result.Status = "blocked"
-			failID := ph.ID
-			result.FailedPhase = &failID
-			result.FailReason = fmt.Sprintf("phase %d (%s) blocked: %s", ph.ID, ph.Name, completion.Detail)
-			result.Duration = time.Since(start)
-			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_blocked")
-			return result, nil
-
-		default:
-			if runResult.Status == "completed" {
-				result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
-				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
-			} else {
+		for attempt := 1; attempt <= totalAttempts; attempt++ {
+			select {
+			case <-ctx.Done():
 				result.Status = "failed"
+				result.FailReason = "pipeline cancelled"
+				result.Duration = time.Since(start)
+				return result, ctx.Err()
+			default:
+			}
+
+			scratchpadContent := scratchpad.ForPrompt()
+			phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, prevOutputs, scratchpadContent)
+			phasePrompt = spec.BuildPromptWithProtocol(phasePrompt, taskID, p.cfg.TaskDir)
+
+			liveness := p.buildLiveness()
+
+			if attempt == 1 {
+				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_started")
+			} else {
+				p.emitPhaseRetryEvent(taskID, runtimeName, model, ph, attempt)
+			}
+
+			runResult, err := p.runner.Run(ctx, taskID, runtimeName, model, phasePrompt, p.spec, liveness)
+			if err != nil {
+				var notes []string
+				if runResult != nil {
+					notes = extractNotes(runResult.Output)
+				}
+				_ = scratchpad.AppendAttempt(attempt, notes, fmt.Sprintf("runner error: %v", err))
+				lastFailReason = fmt.Sprintf("phase %d (%s) runner error: %v", ph.ID, ph.Name, err)
+				continue
+			}
+
+			completion := extractCompletion(runResult.Output, ph.CompletionSignal)
+
+			switch {
+			case completion.Status == "done":
+				phaseCompleted = true
+				prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
+				result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
+				result.AttemptsByPhase[ph.ID] = attempt
+				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
+
+			case completion.Status == "fail":
+				notes := extractNotes(runResult.Output)
+				_ = scratchpad.AppendAttempt(attempt, notes, completion.Detail)
+				lastFailReason = fmt.Sprintf("phase %d (%s): %s", ph.ID, ph.Name, completion.Detail)
+
+			case completion.Status == "blocked":
+				result.Status = "blocked"
 				failID := ph.ID
 				result.FailedPhase = &failID
-				result.FailReason = fmt.Sprintf("phase %d (%s): worker exited with status %s, no completion promise",
-					ph.ID, ph.Name, runResult.Status)
+				result.FailReason = fmt.Sprintf("phase %d (%s) blocked: %s", ph.ID, ph.Name, completion.Detail)
 				result.Duration = time.Since(start)
-				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_failed")
+				result.AttemptsByPhase[ph.ID] = attempt
+				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_blocked")
 				return result, nil
+
+			default:
+				if runResult.Status == "completed" {
+					phaseCompleted = true
+					prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
+					result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
+					result.AttemptsByPhase[ph.ID] = attempt
+					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
+				} else {
+					notes := extractNotes(runResult.Output)
+					_ = scratchpad.AppendAttempt(attempt, notes,
+						fmt.Sprintf("worker exited with status %s, no completion promise", runResult.Status))
+					lastFailReason = fmt.Sprintf("phase %d (%s): worker exited with status %s, no completion promise",
+						ph.ID, ph.Name, runResult.Status)
+				}
 			}
+
+			if phaseCompleted {
+				break
+			}
+		}
+
+		if !phaseCompleted {
+			result.Status = "failed"
+			failID := ph.ID
+			result.FailedPhase = &failID
+			result.FailReason = fmt.Sprintf("%s (after %d attempts)", lastFailReason, totalAttempts)
+			result.Duration = time.Since(start)
+			result.AttemptsByPhase[ph.ID] = totalAttempts
+			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_failed")
+			return result, nil
 		}
 	}
 
 	result.Status = "completed"
 	result.Duration = time.Since(start)
 	return result, nil
+}
+
+func (p *Pipeline) resolveMaxRetries() int {
+	if p.cfg.PhaseMachine.MaxL1Retries > 0 {
+		return p.cfg.PhaseMachine.MaxL1Retries
+	}
+	return 2
 }
 
 func (p *Pipeline) resolveRoleRuntime(role string) (string, string) {
@@ -188,6 +236,20 @@ func (p *Pipeline) emitPhaseEvent(taskID, runtimeName, model string, ph Phase, e
 		})
 }
 
+func (p *Pipeline) emitPhaseRetryEvent(taskID, runtimeName, model string, ph Phase, attempt int) {
+	if p.emitter == nil {
+		return
+	}
+	_ = p.emitter.TaskEvent(taskID, runtimeName, model, "baton-pipeline", "phase_retry",
+		map[string]interface{}{
+			"phase_id":   ph.ID,
+			"phase_name": ph.Name,
+			"role":       ph.Role,
+			"complexity": p.config.Complexity,
+			"attempt":    attempt,
+		})
+}
+
 func extractCompletion(output []string, expectedSignal string) proto.CompletionPromise {
 	for i := len(output) - 1; i >= 0; i-- {
 		mk, ok := proto.ParseMarker(output[i])
@@ -203,4 +265,15 @@ func extractCompletion(output []string, expectedSignal string) proto.CompletionP
 		}
 	}
 	return proto.CompletionPromise{}
+}
+
+func extractNotes(output []string) []string {
+	var notes []string
+	for _, line := range output {
+		mk, ok := proto.ParseMarker(line)
+		if ok && mk.Type == proto.MarkerNote {
+			notes = append(notes, mk.Msg)
+		}
+	}
+	return notes
 }

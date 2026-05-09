@@ -53,6 +53,7 @@ type DefaultsConfig struct {
 type PhaseMachineConfig struct {
 	Enabled           bool   `yaml:"enabled"`
 	ComplexityDefault string `yaml:"complexity_default"`
+	MaxL1Retries      int    `yaml:"max_l1_retries"`
 }
 
 type RoleModelConfig struct {
