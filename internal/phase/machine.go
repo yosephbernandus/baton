@@ -19,7 +19,7 @@ import (
 
 type PhaseRunner interface {
 	Run(ctx context.Context, taskID, runtimeName, model, prompt string,
-		s *spec.Spec, liveness runner.LivenessConfig) (*runner.Result, error)
+		s *spec.Spec, liveness runner.LivenessConfig, extraArgs ...string) (*runner.Result, error)
 }
 
 type PipelineConfig struct {
@@ -254,6 +254,13 @@ func (p *Pipeline) executePhaseWithRetries(
 	scratchpad := NewScratchpad(p.cfg.TaskDir, taskID)
 	loopDetector := p.newLoopDetector()
 
+	var toolRestrictionFlags []string
+	if rt, ok := p.cfg.Runtimes[runtimeName]; ok {
+		if tools := role.AllowedTools(ph.Role); len(tools) > 0 {
+			toolRestrictionFlags = runner.BuildToolRestrictionFlags(&rt, tools)
+		}
+	}
+
 	var lastFailReason string
 	totalAttempts := maxRetries + 1
 
@@ -280,7 +287,7 @@ func (p *Pipeline) executePhaseWithRetries(
 			p.emitPhaseRetryEvent(taskID, runtimeName, model, ph, attempt)
 		}
 
-		runResult, err := p.runner.Run(ctx, taskID, runtimeName, model, phasePrompt, p.spec, liveness)
+		runResult, err := p.runner.Run(ctx, taskID, runtimeName, model, phasePrompt, p.spec, liveness, toolRestrictionFlags...)
 		if err != nil {
 			var notes []string
 			var output []string

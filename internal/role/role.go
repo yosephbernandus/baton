@@ -131,6 +131,23 @@ func containsAny(ops []string, targets ...string) bool {
 	return false
 }
 
+func AllowedTools(roleName string) []string {
+	switch roleName {
+	case "lead":
+		return []string{"Read", "Grep", "Glob", "Bash"}
+	case "developer":
+		return nil // no restriction
+	case "reviewer":
+		return []string{"Read", "Grep", "Glob", "Bash"}
+	case "test_lead":
+		return []string{"Read", "Grep", "Glob"}
+	case "tester":
+		return []string{"Read", "Edit", "Write", "Bash"}
+	default:
+		return nil
+	}
+}
+
 func BoundaryText(roleName string) string {
 	r, ok := Roles[roleName]
 	if !ok {

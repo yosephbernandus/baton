@@ -12,17 +12,19 @@ import (
 )
 
 type mockRunner struct {
-	results []*runner.Result
-	errors  []error
-	calls   int
-	prompts []string
+	results   []*runner.Result
+	errors    []error
+	calls     int
+	prompts   []string
+	extraArgs [][]string
 }
 
 func (m *mockRunner) Run(_ context.Context, _, _, _, prompt string,
-	_ *spec.Spec, _ runner.LivenessConfig) (*runner.Result, error) {
+	_ *spec.Spec, _ runner.LivenessConfig, extraArgs ...string) (*runner.Result, error) {
 	i := m.calls
 	m.calls++
 	m.prompts = append(m.prompts, prompt)
+	m.extraArgs = append(m.extraArgs, extraArgs)
 	if i < len(m.results) {
 		return m.results[i], m.errors[i]
 	}
@@ -806,5 +808,96 @@ func TestCountHeartbeatsNone(t *testing.T) {
 	output := []string{"plain output", "BATON:C:setup:done"}
 	if c := countHeartbeats(output); c != 0 {
 		t.Errorf("count=%d, want 0", c)
+	}
+}
+
+func TestToolRestrictionFlagsPassedToRunner(t *testing.T) {
+	mr := &mockRunner{
+		results: []*runner.Result{
+			{Status: "completed", Output: []string{"BATON:C:setup:done"}},
+		},
+		errors: []error{nil},
+	}
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{Runtime: "mock", Model: "test"},
+		Runtimes: map[string]config.RuntimeConfig{
+			"mock": {
+				Command: "echo",
+				ToolRestriction: &config.ToolRestriction{
+					Flag:   "--allowedTools",
+					Format: "comma-separated",
+				},
+			},
+		},
+		TaskDir:         t.TempDir(),
+		AbsoluteTimeout: "5m",
+		SilenceTimeout:  "2m",
+	}
+
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{
+		Complexity: ComplexityTrivial,
+	})
+
+	_, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mr.calls < 1 {
+		t.Fatal("expected at least 1 call")
+	}
+	// Phase 1 (setup) has role "lead" → AllowedTools returns ["Read","Grep","Glob","Bash"]
+	args := mr.extraArgs[0]
+	if len(args) != 2 {
+		t.Fatalf("expected 2 extra args (flag + value), got %d: %v", len(args), args)
+	}
+	if args[0] != "--allowedTools" {
+		t.Errorf("flag=%q, want --allowedTools", args[0])
+	}
+	if !strings.Contains(args[1], "Read") || !strings.Contains(args[1], "Bash") {
+		t.Errorf("expected tools in %q", args[1])
+	}
+}
+
+func TestToolRestrictionFlagsNilForDeveloper(t *testing.T) {
+	mr := &mockRunner{
+		results: []*runner.Result{
+			{Status: "completed", Output: []string{"BATON:C:setup:done"}},
+			{Status: "completed", Output: []string{"BATON:C:implementation:done"}},
+			{Status: "completed", Output: []string{"BATON:C:ship:done"}},
+		},
+		errors: []error{nil, nil, nil},
+	}
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{Runtime: "mock", Model: "test"},
+		Runtimes: map[string]config.RuntimeConfig{
+			"mock": {
+				Command: "echo",
+				ToolRestriction: &config.ToolRestriction{
+					Flag:   "--allowedTools",
+					Format: "comma-separated",
+				},
+			},
+		},
+		TaskDir:         t.TempDir(),
+		AbsoluteTimeout: "5m",
+		SilenceTimeout:  "2m",
+	}
+
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{
+		Complexity: ComplexityTrivial,
+	})
+
+	_, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// TRIVIAL runs phases 1,8,16. Phase 8 (implementation) has role "developer"
+	// developer has no tool restrictions → extraArgs should be empty
+	if mr.calls < 2 {
+		t.Fatal("expected at least 2 calls")
+	}
+	devArgs := mr.extraArgs[1] // phase 8, developer
+	if len(devArgs) != 0 {
+		t.Errorf("developer should have no tool restriction flags, got %v", devArgs)
 	}
 }

@@ -59,7 +59,7 @@ func New(cfg *config.Config, emitter *events.Emitter, store *task.Store) *Runner
 	return &Runner{cfg: cfg, emitter: emitter, store: store, procs: make(map[string]*exec.Cmd)}
 }
 
-func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt string, s *spec.Spec, liveness LivenessConfig) (*Result, error) {
+func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt string, s *spec.Spec, liveness LivenessConfig, extraArgs ...string) (*Result, error) {
 	rt, ok := r.cfg.Runtimes[runtimeName]
 	if !ok {
 		return nil, fmt.Errorf("runtime %q not found", runtimeName)
@@ -77,7 +77,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		_ = os.WriteFile(inboxPath, nil, 0o644)
 	}
 
-	cmd := r.buildCommand(innerCtx, &rt, model, prompt, s)
+	cmd := r.buildCommand(innerCtx, &rt, model, prompt, s, extraArgs...)
 
 	_ = r.emitter.TaskEvent(taskID, runtimeName, model, r.cfg.Orchestrator.Runtime+"/"+r.cfg.Orchestrator.Model, "task_started", map[string]interface{}{
 		"attempt": 1,
@@ -316,6 +316,24 @@ func buildArgs(rt *config.RuntimeConfig, model, prompt string, s *spec.Spec) []s
 	}
 
 	return args
+}
+
+func BuildToolRestrictionFlags(rt *config.RuntimeConfig, allowedTools []string) []string {
+	if rt.ToolRestriction == nil || rt.ToolRestriction.Flag == "" || len(allowedTools) == 0 {
+		return nil
+	}
+	switch rt.ToolRestriction.Format {
+	case "comma-separated":
+		return []string{rt.ToolRestriction.Flag, strings.Join(allowedTools, ",")}
+	case "repeat":
+		var flags []string
+		for _, tool := range allowedTools {
+			flags = append(flags, rt.ToolRestriction.Flag, tool)
+		}
+		return flags
+	default:
+		return []string{rt.ToolRestriction.Flag, strings.Join(allowedTools, ",")}
+	}
 }
 
 func (r *Runner) determineStatus(exitCode int, clarification string, reason int32, output []string) string {

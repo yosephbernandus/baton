@@ -113,6 +113,32 @@ func TestBoundaryText(t *testing.T) {
 	}
 }
 
+func TestAllowedToolsLead(t *testing.T) {
+	tools := AllowedTools("lead")
+	if len(tools) == 0 {
+		t.Fatal("lead should have restricted tools")
+	}
+	for _, tool := range tools {
+		if tool == "Edit" || tool == "Write" {
+			t.Errorf("lead should not have %s", tool)
+		}
+	}
+}
+
+func TestAllowedToolsDeveloper(t *testing.T) {
+	tools := AllowedTools("developer")
+	if tools != nil {
+		t.Errorf("developer should have no restrictions (nil), got %v", tools)
+	}
+}
+
+func TestAllowedToolsUnknown(t *testing.T) {
+	tools := AllowedTools("nonexistent")
+	if tools != nil {
+		t.Errorf("unknown role should return nil, got %v", tools)
+	}
+}
+
 func TestAllRolesHaveBoundary(t *testing.T) {
 	for name, r := range Roles {
 		if r.Boundary == "" {
