@@ -112,6 +112,7 @@ func TestTakeSnapshot_InGitRepo(t *testing.T) {
 	}
 	if snap == nil {
 		t.Fatal("expected snapshot, got nil")
+		return
 	}
 	if len(snap.Modified) != 0 {
 		t.Errorf("expected 0 modified, got %d", len(snap.Modified))

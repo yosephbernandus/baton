@@ -403,6 +403,273 @@ baton run --auto-route --spec specs/frontend-task.yaml --task-id fe-1
 baton run --auto-route --spec specs/backend-task.yaml --task-id be-1
 ```
 
+## Pipeline Mode (16-Phase Deterministic Orchestration)
+
+Pipeline mode runs a structured 16-phase execution for any task spec. Each phase has a dedicated role, retries, loop detection, and self-healing. No LLM decides phase order — it's deterministic.
+
+### Pipeline Setup
+
+Add pipeline config to `.baton/agents.yaml`:
+
+```yaml
+# Phase machine (enables pipeline mode)
+phase_machine:
+  enabled: true
+  complexity_default: MEDIUM    # TRIVIAL | SMALL | MEDIUM | LARGE
+  max_l1_retries: 3             # retries per phase before failing
+  max_l2_cycles: 3              # impl→verify loop cycles before failing
+  heartbeat_budget: 50          # max heartbeats per phase (0 = unlimited)
+
+# Role-specific model routing (optional)
+# Different roles benefit from different models:
+#   Lead/Reviewer → strong reasoning (Sonnet, Opus)
+#   Developer/Tester → fast code generation (Kimi, DeepSeek)
+role_models:
+  lead:
+    runtime: claude-code
+    model: sonnet
+  developer:
+    runtime: opencode
+    model: kimi-k2
+  reviewer:
+    runtime: claude-code
+    model: sonnet
+  test_lead:
+    runtime: claude-code
+    model: sonnet
+  tester:
+    runtime: opencode
+    model: deepseek-v3
+
+# Tool restriction enforcement (optional)
+# Runtimes that support tool restriction flags get hard enforcement.
+# Others fall back to prompt-level enforcement.
+runtimes:
+  claude-code:
+    command: claude
+    model_flag: "--model"
+    extra_flags: ["--print", "--dangerously-skip-permissions"]
+    positional: ["{{prompt}}"]
+    models: [claude-sonnet-4-6, claude-opus-4-6]
+    tool_restriction:
+      flag: "--allowedTools"
+      format: "comma-separated"    # or "repeat" for --tool X --tool Y
+
+  opencode:
+    command: opencode
+    model_flag: "--model"
+    positional: ["run", "{{prompt}}"]
+    extra_flags: ["--dangerously-skip-permissions"]
+    models: [kimi-k2, deepseek-v3]
+    # No tool_restriction — uses prompt-only enforcement
+```
+
+### Pipeline Phases
+
+The 16 phases execute in order, with complexity-based skipping:
+
+| # | Phase | Role | TRIVIAL | SMALL | MEDIUM | LARGE |
+|---|-------|------|---------|-------|--------|-------|
+| 1 | Setup | Lead | ✓ | ✓ | ✓ | ✓ |
+| 2 | Triage | Lead | — | ✓ | ✓ | ✓ |
+| 3 | Discovery | Lead | — | ✓ | ✓ | ✓ |
+| 4 | Skill Discovery | Lead | — | ✓ | ✓ | ✓ |
+| 5 | Complexity | Lead | — | — | ✓ | ✓ |
+| 6 | Brainstorming | Lead | — | — | ✓ | ✓ |
+| 7 | Architecture | Lead | — | — | ✓ | ✓ |
+| 8 | Implementation | Developer | ✓ | ✓ | ✓ | ✓ |
+| 9 | Design Verification | Reviewer | — | — | ✓ | ✓ |
+| 10 | Domain Compliance | Reviewer | — | ✓ | ✓ | ✓ |
+| 11 | Code Quality | Reviewer | — | — | ✓ | ✓ |
+| 12 | Test Planning | Test Lead | — | ✓ | ✓ | ✓ |
+| 13 | Testing | Tester | — | ✓ | ✓ | ✓ |
+| 14 | Coverage Verification | Reviewer | — | ✓ | ✓ | ✓ |
+| 15 | Test Quality | Reviewer | — | — | ✓ | ✓ |
+| 16 | Completion | Lead | ✓ | ✓ | ✓ | ✓ |
+
+TRIVIAL runs 3 phases. SMALL runs 11. MEDIUM/LARGE run all 16.
+
+### Running a Pipeline
+
+```bash
+# Run with complexity from spec or config default
+baton pipeline run .baton/specs/feature.yaml
+
+# Override complexity
+baton pipeline run .baton/specs/feature.yaml --complexity LARGE
+
+# Check session state
+baton session status
+
+# Reset after crash/failure
+baton session reset
+```
+
+Task spec for pipeline — same format, optional `estimated_complexity` and `domain`:
+
+```yaml
+spec:
+  what: Add rate limiting to the API gateway
+  why: Prevent abuse and ensure fair resource allocation
+  estimated_complexity: MEDIUM
+  domain: backend              # maps to .baton/skills/backend/
+  constraints:
+    - Must be backwards-compatible
+    - Use token bucket algorithm
+  context_files:
+    - internal/gateway/handler.go
+    - internal/middleware/auth.go
+  acceptance_criteria:
+    - Rate limit headers present in responses
+    - 429 returned when limit exceeded
+  acceptance_checks:
+    - command: "go test ./internal/gateway/..."
+      expect_exit: 0
+      description: "Gateway tests pass"
+```
+
+### What Happens During Pipeline Execution
+
+1. **Phase execution**: Each phase spawns a worker with role-specific prompt and boundaries
+2. **Role enforcement**: Three levels — prompt injection, runtime flags (if supported), post-hoc file change verification
+3. **L1 retries**: Failed phase retries with scratchpad context (prevents repeating same mistakes)
+4. **Loop detection**: Jaccard similarity on output tails catches stuck workers early
+5. **L2 loops**: Failed verification → loops back to implementation (up to `max_l2_cycles`)
+6. **Dirty bit tracking**: Modified files injected into verification phase prompts
+7. **Session manifest**: Atomic YAML at `.baton/session.yaml` enables crash recovery
+8. **Escalation advisor** (opt-in): LLM consultation when all retries exhausted
+
+### Domain Skills (Optional)
+
+Inject domain-specific context into worker prompts automatically:
+
+```
+.baton/skills/
+  backend/
+    conventions.md          # Go patterns, error handling guides
+    api-patterns.md         # REST conventions
+  frontend/
+    component-patterns.md   # React patterns
+    state-management.md     # State management rules
+  testing/
+    test-patterns.md        # Testing conventions
+  infra/
+    terraform-rules.yaml    # IaC patterns
+```
+
+Domain is resolved from:
+1. Explicit `domain:` field in task spec
+2. Inferred from `context_files` extensions (`.go` → `go`, `.tsx` → `react`)
+
+Configure domain mapping in `agents.yaml`:
+
+```yaml
+skills:
+  dir: .baton/skills/
+  domain_map:
+    go: backend
+    react: frontend
+    terraform: infra
+    test: testing
+    sql: database
+```
+
+### Escalation Advisor (Optional)
+
+Opt-in LLM consultation when stuck. Disabled by default.
+
+```yaml
+escalation_advisor:
+  enabled: true                 # opt-in only
+  runtime: claude-code
+  model: sonnet
+  max_calls_per_session: 5      # hard cap
+  max_calls_per_task: 2         # per-task cap
+  timeout: 30s
+```
+
+When enabled, the advisor is consulted after L1 retries or L2 cycles are exhausted. It recommends one of:
+- `retry_with_hint` — inject specific guidance into next attempt
+- `skip_phase` — advance past stuck phase (with justification)
+- `escalate_to_human` — structured context dump for human review
+- `modify_constraints` — suggest relaxing a blocking constraint
+
+When disabled (default), advisor context is written to `.baton/tasks/{id}/advisor-context.yaml` for manual review:
+
+```bash
+baton advise <task-id>         # view advisor context
+baton respond <task-id> "..."  # provide guidance manually
+```
+
+### Self-Annealing (Feedback Mining + Config Patches)
+
+Baton analyzes its own event log to detect performance patterns and suggest config improvements.
+
+```yaml
+feedback:
+  enabled: true
+  analysis_window: 168h         # 7 days
+  min_occurrences: 3            # minimum data points for pattern
+  output_path: .baton/feedback/analysis.yaml
+
+annealing:
+  enabled: true
+  auto_apply: false             # manual review by default
+  auto_apply_max_risk: low      # only auto-apply low-risk patches
+  min_confidence: medium        # minimum confidence to generate patch
+  patch_dir: .baton/annealing/
+```
+
+**Workflow:**
+
+```bash
+# Analyze event log for patterns
+baton feedback
+# Output: runtime success rates, retry rates, domain mismatches, timeout issues
+
+# Generate config patches from detected patterns
+baton anneal generate
+# Output: suggested patches with confidence/risk ratings
+
+# Review pending patches
+baton anneal list
+
+# View full patch history
+baton anneal history
+```
+
+**Detected patterns:**
+
+| Pattern | Detection | Suggestion |
+|---------|-----------|------------|
+| `runtime_domain_mismatch` | Runtime fails >40% for a domain | Route domain to better runtime |
+| `retry_budget_insufficient` | >30% of tasks exhaust L1 retries | Increase `max_l1_retries` |
+| `retry_budget_excessive` | Tasks never need retries | Decrease retry budget |
+| `loop_model_affinity` | Model triggers loops frequently | Switch to different model |
+| `timeout_mismatch` | >20% of phases hit timeout | Increase timeout |
+
+**Safety constraints:**
+- Never auto-patches `phase_machine.enabled` or `escalation_advisor` settings
+- All patches include rationale and are reversible
+- Auto-apply limited to `low` risk patches only
+
+### Pipeline Command Reference
+
+| Command | Description |
+|---------|-------------|
+| `baton pipeline run <spec.yaml>` | Run 16-phase pipeline |
+| `baton pipeline run <spec.yaml> --complexity SMALL` | Override complexity |
+| `baton pipeline status` | Show pipeline status |
+| `baton session status` | Show session manifest |
+| `baton session reset` | Clear session, start fresh |
+| `baton advise <task-id>` | View advisor context for stuck task |
+| `baton feedback` | Analyze event log patterns |
+| `baton feedback --json` | Machine-readable analysis |
+| `baton feedback --window 720h` | Analyze last 30 days |
+| `baton anneal generate` | Generate config patches |
+| `baton anneal list` | List pending patches |
+| `baton anneal history` | Full patch history |
+
 ## .gitignore
 
 Add to your project's `.gitignore`:
@@ -411,6 +678,9 @@ Add to your project's `.gitignore`:
 .baton/events.ndjson*
 .baton/locks.yaml
 .baton/results/
+.baton/session.yaml
+.baton/feedback/
+.baton/annealing/
 ```
 
 Keep in git:
@@ -418,6 +688,7 @@ Keep in git:
 .baton/agents.yaml
 .baton/project-brief.md
 .baton/specs/
+.baton/skills/
 ```
 
 ## Troubleshooting
@@ -429,3 +700,8 @@ Keep in git:
 | Task stuck as "running" | `baton kill <id>` — handles dead PIDs and process groups |
 | Worker chats instead of executing | Model may not support tool-use in run mode. Try a different model. |
 | Lock conflict | Another task holds the file lock. Check `baton status` for running tasks. |
+| Pipeline crashes mid-phase | `baton session status` shows last state. `baton session reset` to restart. |
+| Reviewer modifies files | Post-hoc verification catches this. Phase retries with boundary warning. |
+| Worker stuck in loop | Loop detection triggers after 3 similar outputs. Escalates to L2 or advisor. |
+| No patterns in feedback | Need more event data. Run more tasks. Lower `min_occurrences` if needed. |
+| Advisor not responding | Check `escalation_advisor.enabled: true` and runtime/model are valid. Falls back to context dump. |
