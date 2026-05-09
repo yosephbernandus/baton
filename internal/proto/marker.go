@@ -13,6 +13,8 @@ const (
 	MarkerStuck
 	MarkerError
 	MarkerMilestone
+	MarkerComplete
+	MarkerNote
 )
 
 type Marker struct {
@@ -48,6 +50,10 @@ func ParseMarker(line string) (Marker, bool) {
 		return Marker{Type: MarkerError, Msg: payload}, true
 	case 'M':
 		return Marker{Type: MarkerMilestone, Msg: payload}, true
+	case 'C':
+		return Marker{Type: MarkerComplete, Msg: payload}, true
+	case 'N':
+		return Marker{Type: MarkerNote, Msg: payload}, true
 	default:
 		return Marker{}, false
 	}
@@ -77,7 +83,35 @@ func (t MarkerType) String() string {
 		return "error"
 	case MarkerMilestone:
 		return "milestone"
+	case MarkerComplete:
+		return "complete"
+	case MarkerNote:
+		return "note"
 	default:
 		return "unknown"
 	}
+}
+
+type CompletionPromise struct {
+	Phase  string
+	Status string
+	Detail string
+}
+
+func ParseCompletion(m Marker) (CompletionPromise, bool) {
+	if m.Type != MarkerComplete {
+		return CompletionPromise{}, false
+	}
+	parts := strings.SplitN(m.Msg, ":", 3)
+	if len(parts) < 2 {
+		return CompletionPromise{}, false
+	}
+	cp := CompletionPromise{
+		Phase:  parts[0],
+		Status: parts[1],
+	}
+	if len(parts) == 3 {
+		cp.Detail = parts[2]
+	}
+	return cp, true
 }

@@ -16,6 +16,9 @@ func TestParseMarker(t *testing.T) {
 		{"BATON:S:which schema v1 or v2?", true, MarkerStuck, "which schema v1 or v2?", 0},
 		{"BATON:E:build failed:undefined ref", true, MarkerError, "build failed:undefined ref", 0},
 		{"BATON:M:tests passing", true, MarkerMilestone, "tests passing", 0},
+		{"BATON:C:implementation:done", true, MarkerComplete, "implementation:done", 0},
+		{"BATON:C:review:fail:3 issues", true, MarkerComplete, "review:fail:3 issues", 0},
+		{"BATON:N:tried v1, failed", true, MarkerNote, "tried v1, failed", 0},
 		{"some output BATON:H:alive", true, MarkerHeartbeat, "alive", 0},
 		{"not a marker", false, 0, "", 0},
 		{"BATON:", false, 0, "", 0},
@@ -55,6 +58,47 @@ func TestMarkerToMessage(t *testing.T) {
 	}
 	if msg.Msg != "auth" {
 		t.Errorf("Msg=%q, want auth", msg.Msg)
+	}
+}
+
+func TestParseCompletion(t *testing.T) {
+	tests := []struct {
+		msg    string
+		phase  string
+		status string
+		detail string
+	}{
+		{"implementation:done", "implementation", "done", ""},
+		{"review:fail:3 issues", "review", "fail", "3 issues"},
+		{"triage:done:MEDIUM", "triage", "done", "MEDIUM"},
+		{"testing:blocked:missing key", "testing", "blocked", "missing key"},
+	}
+	for _, tt := range tests {
+		mk := Marker{Type: MarkerComplete, Msg: tt.msg}
+		cp, ok := ParseCompletion(mk)
+		if !ok {
+			t.Errorf("ParseCompletion(%q): expected ok=true", tt.msg)
+			continue
+		}
+		if cp.Phase != tt.phase || cp.Status != tt.status || cp.Detail != tt.detail {
+			t.Errorf("ParseCompletion(%q): got {%s,%s,%s}, want {%s,%s,%s}",
+				tt.msg, cp.Phase, cp.Status, cp.Detail, tt.phase, tt.status, tt.detail)
+		}
+	}
+
+	// non-complete marker
+	mk := Marker{Type: MarkerHeartbeat, Msg: "alive"}
+	if _, ok := ParseCompletion(mk); ok {
+		t.Error("ParseCompletion should return false for non-complete markers")
+	}
+}
+
+func TestMarkerTypeStringNewTypes(t *testing.T) {
+	if MarkerComplete.String() != "complete" {
+		t.Errorf("got %q, want %q", MarkerComplete.String(), "complete")
+	}
+	if MarkerNote.String() != "note" {
+		t.Errorf("got %q, want %q", MarkerNote.String(), "note")
 	}
 }
 

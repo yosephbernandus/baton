@@ -26,6 +26,8 @@ type Config struct {
 	SilenceTimeout  string                   `yaml:"silence_timeout"`
 	SilenceWarning  string                   `yaml:"silence_warning"`
 	OutputTailLines int                      `yaml:"output_tail_lines"`
+	PhaseMachine    PhaseMachineConfig       `yaml:"phase_machine"`
+	RoleModels      map[string]RoleModelConfig `yaml:"role_models"`
 }
 
 type OrchestratorConfig struct {
@@ -44,6 +46,16 @@ type RuntimeConfig struct {
 }
 
 type DefaultsConfig struct {
+	Runtime string `yaml:"runtime"`
+	Model   string `yaml:"model"`
+}
+
+type PhaseMachineConfig struct {
+	Enabled           bool   `yaml:"enabled"`
+	ComplexityDefault string `yaml:"complexity_default"`
+}
+
+type RoleModelConfig struct {
 	Runtime string `yaml:"runtime"`
 	Model   string `yaml:"model"`
 }

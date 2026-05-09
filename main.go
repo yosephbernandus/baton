@@ -32,6 +32,7 @@ func main() {
 		cmd.NewEscalateCmd(),
 		cmd.NewGuideCmd(),
 		cmd.NewProgressCmd(),
+		cmd.NewPipelineCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

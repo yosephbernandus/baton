@@ -1,0 +1,11 @@
+spec:
+  what: "Add a hello function that returns 'hello world'"
+  why: "Testing pipeline execution with mock runtime"
+  constraints:
+    - "Use only stdlib"
+  context_files:
+    - "main.go"
+  acceptance_criteria:
+    - "Function exists and returns correct string"
+  estimated_complexity: "TRIVIAL"
+  criticality: "low"
