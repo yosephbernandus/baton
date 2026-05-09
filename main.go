@@ -35,6 +35,8 @@ func main() {
 		cmd.NewPipelineCmd(),
 		cmd.NewSessionCmd(),
 		cmd.NewAdviseCmd(),
+		cmd.NewFeedbackCmd(),
+		cmd.NewAnnealCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

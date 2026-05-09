@@ -30,6 +30,8 @@ type Config struct {
 	RoleModels      map[string]RoleModelConfig `yaml:"role_models"`
 	Skills          SkillsConfig               `yaml:"skills"`
 	Advisor         AdvisorConfig              `yaml:"escalation_advisor"`
+	Feedback        FeedbackConfig             `yaml:"feedback"`
+	Annealing       AnnealingConfig            `yaml:"annealing"`
 }
 
 type AdvisorConfig struct {
@@ -87,6 +89,21 @@ type PhaseMachineConfig struct {
 type RoleModelConfig struct {
 	Runtime string `yaml:"runtime"`
 	Model   string `yaml:"model"`
+}
+
+type FeedbackConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	AnalysisWindow string `yaml:"analysis_window"`
+	MinOccurrences int    `yaml:"min_occurrences"`
+	OutputPath     string `yaml:"output_path"`
+}
+
+type AnnealingConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	AutoApply       bool   `yaml:"auto_apply"`
+	AutoApplyMaxRisk string `yaml:"auto_apply_max_risk"`
+	MinConfidence   string `yaml:"min_confidence"`
+	PatchDir        string `yaml:"patch_dir"`
 }
 
 type RoutingConfig struct {
