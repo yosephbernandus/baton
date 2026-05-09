@@ -300,10 +300,105 @@ Language: Go 1.22
 
 ---
 
+## Pipeline Mode: When Simple Dispatch Isn't Enough
+
+For complex features, baton's pipeline mode runs a 16-phase deterministic pipeline with role enforcement, retries, and self-healing.
+
+### When to Use Pipeline vs Simple
+
+| Scenario | Mode |
+|----------|------|
+| Quick fix, one file | `baton run` (simple) |
+| Feature with tests and review needed | `baton pipeline run` (pipeline) |
+| Multi-file refactor | `baton pipeline run --complexity MEDIUM` |
+| Large feature with architecture decisions | `baton pipeline run --complexity LARGE` |
+
+### Pipeline Spec Additions
+
+Add these optional fields to your spec for pipeline mode:
+
+```yaml
+spec:
+  what: Add rate limiting to API gateway
+  why: Prevent abuse and ensure fair resource allocation
+  estimated_complexity: MEDIUM    # TRIVIAL | SMALL | MEDIUM | LARGE
+  domain: backend                 # auto-loads .baton/skills/backend/*.md into prompts
+  constraints:
+    - Must be backwards-compatible
+  context_files:
+    - internal/gateway/handler.go
+  acceptance_criteria:
+    - Rate limit headers present
+  acceptance_checks:
+    - command: "go test ./internal/gateway/..."
+      expect_exit: 0
+      description: "Gateway tests pass"
+```
+
+### Pipeline Workflow
+
+```bash
+# 1. Run pipeline
+baton pipeline run .baton/specs/rate-limiting.yaml --complexity MEDIUM
+
+# 2. Pipeline executes 16 phases automatically:
+#    Lead plans → Developer implements → Reviewer reviews →
+#    Test Lead plans tests → Tester writes tests → Lead wraps up
+
+# 3. If something fails:
+#    - Phase retries automatically (up to max_l1_retries)
+#    - If review fails, loops back to implementation (L2)
+#    - If stuck, escalation advisor provides guidance
+
+# 4. Check status
+baton session status
+
+# 5. After many runs, analyze and improve
+baton feedback                    # what patterns emerged?
+baton anneal generate             # what config changes would help?
+```
+
+### Domain Skills
+
+Create domain-specific context that gets injected into worker prompts:
+
+```bash
+mkdir -p .baton/skills/backend
+cat > .baton/skills/backend/conventions.md << 'EOF'
+# Backend Conventions
+- Error handling: always wrap with fmt.Errorf("context: %w", err)
+- Naming: camelCase for Go, snake_case for DB columns
+- Testing: table-driven tests, no mocks for DB
+EOF
+```
+
+Workers in phases that match domain "backend" automatically get this context.
+
+### Self-Improvement Loop
+
+After running several pipelines, baton can analyze its own performance:
+
+```bash
+# See how runtimes and phases performed
+baton feedback
+
+# Generate config improvement suggestions
+baton anneal generate
+
+# Review suggestions
+baton anneal list
+```
+
+Example output: "opencode/kimi fails 60% of frontend tasks → Route frontend to claude-code/sonnet"
+
+---
+
 ## Next Steps
 
 1. **Install Baton:** `go install github.com/yosephbernandus/baton@latest`
 2. **Initialize project:** `mkdir -p .baton && cp agents.examples.yaml .baton/agents.yaml`
 3. **Create project-brief:** `.baton/project-brief.md`
-4. **Start small:** Pick one task, write the spec, run it with baton
-5. **Iterate:** Adjust your spec format based on what works for your team
+4. **Start small:** Pick one task, write the spec, run it with `baton run`
+5. **Graduate to pipeline:** For complex features, use `baton pipeline run`
+6. **Add domain skills:** Create `.baton/skills/` with project-specific patterns
+7. **Self-improve:** Run `baton feedback` periodically to optimize config
