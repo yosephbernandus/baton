@@ -31,6 +31,7 @@ type PipelineResult struct {
 	FailReason      string
 	Duration        time.Duration
 	AttemptsByPhase map[int]int
+	L2Cycles        int
 }
 
 type Pipeline struct {
@@ -64,6 +65,7 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 	skipped := SkippedPhaseIDs(p.phases, p.config.Complexity)
 	totalPhases := len(p.phases)
 	maxRetries := p.resolveMaxRetries()
+	maxL2 := p.resolveMaxL2Cycles()
 
 	result := &PipelineResult{
 		PhasesSkipped:   skipped,
@@ -74,8 +76,12 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 	basePrompt := spec.BuildPrompt(p.spec, projectBrief)
 
 	prevOutputs := make(map[int]string)
+	l2Cycles := 0
 
-	for _, ph := range active {
+	i := 0
+	for i < len(active) {
+		ph := active[i]
+
 		select {
 		case <-ctx.Done():
 			result.Status = "failed"
@@ -85,131 +91,101 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 		default:
 		}
 
-		runtimeName, model := p.resolveRoleRuntime(ph.Role)
-		taskID := fmt.Sprintf("%s-phase-%d", p.specID, ph.ID)
-		scratchpad := NewScratchpad(p.cfg.TaskDir, taskID)
-		loopDetector := p.newLoopDetector()
+		phaseOutcome, failReason := p.executePhaseWithRetries(
+			ctx, ph, basePrompt, totalPhases, prevOutputs, maxRetries, result)
 
-		var phaseCompleted bool
-		var loopDetected bool
-		var lastFailReason string
-		totalAttempts := maxRetries + 1
+		switch phaseOutcome {
+		case outcomeCompleted:
+			i++
 
-		for attempt := 1; attempt <= totalAttempts; attempt++ {
-			select {
-			case <-ctx.Done():
-				result.Status = "failed"
-				result.FailReason = "pipeline cancelled"
-				result.Duration = time.Since(start)
-				return result, ctx.Err()
-			default:
-			}
+		case outcomeCancelled:
+			result.Status = "failed"
+			result.FailReason = "pipeline cancelled"
+			result.Duration = time.Since(start)
+			return result, ctx.Err()
 
-			scratchpadContent := scratchpad.ForPrompt()
-			phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, prevOutputs, scratchpadContent)
-			phasePrompt = spec.BuildPromptWithProtocol(phasePrompt, taskID, p.cfg.TaskDir)
+		case outcomeBlocked:
+			result.Duration = time.Since(start)
+			return result, nil
 
-			liveness := p.buildLiveness()
+		case outcomeFailed:
+			if IsVerificationPhase(ph.ID) && l2Cycles < maxL2 {
+				l2Cycles++
+				result.L2Cycles = l2Cycles
 
-			if attempt == 1 {
-				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_started")
-			} else {
-				p.emitPhaseRetryEvent(taskID, runtimeName, model, ph, attempt)
-			}
+				// Inject verification failure into implementation scratchpad
+				implTaskID := fmt.Sprintf("%s-phase-%d", p.specID, L2StartPhase)
+				implScratchpad := NewScratchpad(p.cfg.TaskDir, implTaskID)
+				_ = implScratchpad.AppendAttempt(0, []string{
+					fmt.Sprintf("L2 cycle %d: phase %d (%s) failed: %s",
+						l2Cycles, ph.ID, ph.Name, failReason),
+				}, fmt.Sprintf("verification failed in phase %d, looping back to implementation", ph.ID))
 
-			runResult, err := p.runner.Run(ctx, taskID, runtimeName, model, phasePrompt, p.spec, liveness)
-			if err != nil {
-				var notes []string
-				var output []string
-				if runResult != nil {
-					notes = extractNotes(runResult.Output)
-					output = runResult.Output
-				}
-				_ = scratchpad.AppendAttempt(attempt, notes, fmt.Sprintf("runner error: %v", err))
-				lastFailReason = fmt.Sprintf("phase %d (%s) runner error: %v", ph.ID, ph.Name, err)
-				if loopDetector != nil {
-					loopDetector.Record(output)
-					if loopDetector.IsStuck() {
-						loopDetected = true
+				p.emitL2Event(ph, l2Cycles, failReason)
+
+				// Jump back to implementation phase
+				implIdx := -1
+				for j, ap := range active {
+					if ap.ID == L2StartPhase {
+						implIdx = j
 						break
 					}
 				}
+				if implIdx < 0 {
+					result.Status = "failed"
+					failID := ph.ID
+					result.FailedPhase = &failID
+					result.FailReason = fmt.Sprintf("%s (no implementation phase to loop back to)", failReason)
+					result.Duration = time.Since(start)
+					return result, nil
+				}
+				i = implIdx
 				continue
 			}
 
-			completion := extractCompletion(runResult.Output, ph.CompletionSignal)
-
-			switch {
-			case completion.Status == "done":
-				phaseCompleted = true
-				prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
-				result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
-				result.AttemptsByPhase[ph.ID] = attempt
-				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
-
-			case completion.Status == "fail":
-				notes := extractNotes(runResult.Output)
-				_ = scratchpad.AppendAttempt(attempt, notes, completion.Detail)
-				lastFailReason = fmt.Sprintf("phase %d (%s): %s", ph.ID, ph.Name, completion.Detail)
-				if loopDetector != nil {
-					loopDetector.Record(runResult.Output)
-					if loopDetector.IsStuck() {
-						loopDetected = true
-					}
-				}
-
-			case completion.Status == "blocked":
-				result.Status = "blocked"
-				failID := ph.ID
-				result.FailedPhase = &failID
-				result.FailReason = fmt.Sprintf("phase %d (%s) blocked: %s", ph.ID, ph.Name, completion.Detail)
-				result.Duration = time.Since(start)
-				result.AttemptsByPhase[ph.ID] = attempt
-				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_blocked")
-				return result, nil
-
-			default:
-				if runResult.Status == "completed" {
-					phaseCompleted = true
-					prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
-					result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
-					result.AttemptsByPhase[ph.ID] = attempt
-					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
-				} else {
-					notes := extractNotes(runResult.Output)
-					_ = scratchpad.AppendAttempt(attempt, notes,
-						fmt.Sprintf("worker exited with status %s, no completion promise", runResult.Status))
-					lastFailReason = fmt.Sprintf("phase %d (%s): worker exited with status %s, no completion promise",
-						ph.ID, ph.Name, runResult.Status)
-					if loopDetector != nil {
-						loopDetector.Record(runResult.Output)
-						if loopDetector.IsStuck() {
-							loopDetected = true
-						}
-					}
-				}
-			}
-
-			if phaseCompleted || loopDetected {
-				break
-			}
-		}
-
-		if !phaseCompleted {
+			// No L2 cycles left or not a verification phase
 			result.Status = "failed"
-			failID := ph.ID
-			result.FailedPhase = &failID
-			if loopDetected {
-				_ = scratchpad.AppendAttempt(0, nil,
-					"[LOOP DETECTED] Worker produced identical output across attempts. This approach is fundamentally stuck.")
-				result.FailReason = fmt.Sprintf("%s (loop detected — worker stuck)", lastFailReason)
-				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_stuck")
-			} else {
-				result.FailReason = fmt.Sprintf("%s (after %d attempts)", lastFailReason, totalAttempts)
-				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_failed")
-			}
 			result.Duration = time.Since(start)
-			result.AttemptsByPhase[ph.ID] = totalAttempts
+			if l2Cycles >= maxL2 && IsVerificationPhase(ph.ID) {
+				result.FailReason = fmt.Sprintf("%s (L2 cycles exhausted: %d/%d)", failReason, l2Cycles, maxL2)
+			}
+			return result, nil
+
+		case outcomeStuck:
+			if IsVerificationPhase(ph.ID) && l2Cycles < maxL2 {
+				l2Cycles++
+				result.L2Cycles = l2Cycles
+
+				implTaskID := fmt.Sprintf("%s-phase-%d", p.specID, L2StartPhase)
+				implScratchpad := NewScratchpad(p.cfg.TaskDir, implTaskID)
+				_ = implScratchpad.AppendAttempt(0, []string{
+					fmt.Sprintf("L2 cycle %d: phase %d (%s) stuck (loop detected)",
+						l2Cycles, ph.ID, ph.Name),
+				}, "verification stuck in loop, looping back to implementation with different approach needed")
+
+				p.emitL2Event(ph, l2Cycles, "loop detected — worker stuck")
+
+				implIdx := -1
+				for j, ap := range active {
+					if ap.ID == L2StartPhase {
+						implIdx = j
+						break
+					}
+				}
+				if implIdx < 0 {
+					result.Status = "failed"
+					failID := ph.ID
+					result.FailedPhase = &failID
+					result.FailReason = failReason
+					result.Duration = time.Since(start)
+					return result, nil
+				}
+				i = implIdx
+				continue
+			}
+
+			result.Status = "failed"
+			result.Duration = time.Since(start)
 			return result, nil
 		}
 	}
@@ -219,8 +195,152 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 	return result, nil
 }
 
+type phaseOutcome int
+
+const (
+	outcomeCompleted phaseOutcome = iota
+	outcomeFailed
+	outcomeBlocked
+	outcomeCancelled
+	outcomeStuck
+)
+
+func (p *Pipeline) executePhaseWithRetries(
+	ctx context.Context,
+	ph Phase,
+	basePrompt string,
+	totalPhases int,
+	prevOutputs map[int]string,
+	maxRetries int,
+	result *PipelineResult,
+) (phaseOutcome, string) {
+
+	runtimeName, model := p.resolveRoleRuntime(ph.Role)
+	taskID := fmt.Sprintf("%s-phase-%d", p.specID, ph.ID)
+	scratchpad := NewScratchpad(p.cfg.TaskDir, taskID)
+	loopDetector := p.newLoopDetector()
+
+	var lastFailReason string
+	totalAttempts := maxRetries + 1
+
+	for attempt := 1; attempt <= totalAttempts; attempt++ {
+		select {
+		case <-ctx.Done():
+			return outcomeCancelled, "pipeline cancelled"
+		default:
+		}
+
+		scratchpadContent := scratchpad.ForPrompt()
+		phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, prevOutputs, scratchpadContent)
+		phasePrompt = spec.BuildPromptWithProtocol(phasePrompt, taskID, p.cfg.TaskDir)
+
+		liveness := p.buildLiveness()
+
+		if attempt == 1 {
+			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_started")
+		} else {
+			p.emitPhaseRetryEvent(taskID, runtimeName, model, ph, attempt)
+		}
+
+		runResult, err := p.runner.Run(ctx, taskID, runtimeName, model, phasePrompt, p.spec, liveness)
+		if err != nil {
+			var notes []string
+			var output []string
+			if runResult != nil {
+				notes = extractNotes(runResult.Output)
+				output = runResult.Output
+			}
+			_ = scratchpad.AppendAttempt(attempt, notes, fmt.Sprintf("runner error: %v", err))
+			lastFailReason = fmt.Sprintf("phase %d (%s) runner error: %v", ph.ID, ph.Name, err)
+			if loopDetector != nil {
+				loopDetector.Record(output)
+				if loopDetector.IsStuck() {
+					_ = scratchpad.AppendAttempt(0, nil,
+						"[LOOP DETECTED] Worker produced identical output across attempts. This approach is fundamentally stuck.")
+					result.FailedPhase = intPtr(ph.ID)
+					result.FailReason = fmt.Sprintf("%s (loop detected — worker stuck)", lastFailReason)
+					result.AttemptsByPhase[ph.ID] = attempt
+					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_stuck")
+					return outcomeStuck, lastFailReason
+				}
+			}
+			continue
+		}
+
+		completion := extractCompletion(runResult.Output, ph.CompletionSignal)
+
+		switch {
+		case completion.Status == "done":
+			prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
+			result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
+			result.AttemptsByPhase[ph.ID] = attempt
+			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
+			return outcomeCompleted, ""
+
+		case completion.Status == "fail":
+			notes := extractNotes(runResult.Output)
+			_ = scratchpad.AppendAttempt(attempt, notes, completion.Detail)
+			lastFailReason = fmt.Sprintf("phase %d (%s): %s", ph.ID, ph.Name, completion.Detail)
+			if loopDetector != nil {
+				loopDetector.Record(runResult.Output)
+				if loopDetector.IsStuck() {
+					_ = scratchpad.AppendAttempt(0, nil,
+						"[LOOP DETECTED] Worker produced identical output across attempts. This approach is fundamentally stuck.")
+					result.FailedPhase = intPtr(ph.ID)
+					result.FailReason = fmt.Sprintf("%s (loop detected — worker stuck)", lastFailReason)
+					result.AttemptsByPhase[ph.ID] = attempt
+					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_stuck")
+					return outcomeStuck, lastFailReason
+				}
+			}
+
+		case completion.Status == "blocked":
+			result.Status = "blocked"
+			result.FailedPhase = intPtr(ph.ID)
+			result.FailReason = fmt.Sprintf("phase %d (%s) blocked: %s", ph.ID, ph.Name, completion.Detail)
+			result.AttemptsByPhase[ph.ID] = attempt
+			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_blocked")
+			return outcomeBlocked, result.FailReason
+
+		default:
+			if runResult.Status == "completed" {
+				prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
+				result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
+				result.AttemptsByPhase[ph.ID] = attempt
+				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
+				return outcomeCompleted, ""
+			}
+			notes := extractNotes(runResult.Output)
+			_ = scratchpad.AppendAttempt(attempt, notes,
+				fmt.Sprintf("worker exited with status %s, no completion promise", runResult.Status))
+			lastFailReason = fmt.Sprintf("phase %d (%s): worker exited with status %s, no completion promise",
+				ph.ID, ph.Name, runResult.Status)
+			if loopDetector != nil {
+				loopDetector.Record(runResult.Output)
+				if loopDetector.IsStuck() {
+					_ = scratchpad.AppendAttempt(0, nil,
+						"[LOOP DETECTED] Worker produced identical output across attempts. This approach is fundamentally stuck.")
+					result.FailedPhase = intPtr(ph.ID)
+					result.FailReason = fmt.Sprintf("%s (loop detected — worker stuck)", lastFailReason)
+					result.AttemptsByPhase[ph.ID] = attempt
+					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_stuck")
+					return outcomeStuck, lastFailReason
+				}
+			}
+		}
+	}
+
+	// All retries exhausted
+	result.FailedPhase = intPtr(ph.ID)
+	result.FailReason = fmt.Sprintf("%s (after %d attempts)", lastFailReason, totalAttempts)
+	result.AttemptsByPhase[ph.ID] = totalAttempts
+	p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_failed")
+	return outcomeFailed, lastFailReason
+}
+
+func intPtr(i int) *int { return &i }
+
 func (p *Pipeline) newLoopDetector() *LoopDetector {
-	// Disabled if explicitly set to false
 	if p.cfg.PhaseMachine.LoopDetectionEnabled != nil && !*p.cfg.PhaseMachine.LoopDetectionEnabled {
 		return nil
 	}
@@ -235,6 +355,13 @@ func (p *Pipeline) resolveMaxRetries() int {
 		return p.cfg.PhaseMachine.MaxL1Retries
 	}
 	return 2
+}
+
+func (p *Pipeline) resolveMaxL2Cycles() int {
+	if p.cfg.PhaseMachine.MaxL2Cycles > 0 {
+		return p.cfg.PhaseMachine.MaxL2Cycles
+	}
+	return 3
 }
 
 func (p *Pipeline) resolveRoleRuntime(role string) (string, string) {
@@ -288,6 +415,22 @@ func (p *Pipeline) emitPhaseRetryEvent(taskID, runtimeName, model string, ph Pha
 			"role":       ph.Role,
 			"complexity": p.config.Complexity,
 			"attempt":    attempt,
+		})
+}
+
+func (p *Pipeline) emitL2Event(failedPhase Phase, cycle int, reason string) {
+	if p.emitter == nil {
+		return
+	}
+	_ = p.emitter.TaskEvent(
+		fmt.Sprintf("%s-l2-cycle-%d", p.specID, cycle),
+		"", "", "baton-pipeline", "l2_loop_back",
+		map[string]interface{}{
+			"cycle":             cycle,
+			"failed_phase_id":   failedPhase.ID,
+			"failed_phase_name": failedPhase.Name,
+			"reason":            reason,
+			"looping_back_to":   L2StartPhase,
 		})
 }
 

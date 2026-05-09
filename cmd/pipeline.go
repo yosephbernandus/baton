@@ -103,6 +103,9 @@ func newPipelineRunCmd() *cobra.Command {
 			fmt.Fprintf(os.Stderr, "Duration:  %s\n", result.Duration.Round(time.Second))
 			fmt.Fprintf(os.Stderr, "Completed: %v\n", result.PhasesCompleted)
 			fmt.Fprintf(os.Stderr, "Skipped:   %v\n", result.PhasesSkipped)
+			if result.L2Cycles > 0 {
+				fmt.Fprintf(os.Stderr, "L2 Cycles: %d\n", result.L2Cycles)
+			}
 			if result.FailedPhase != nil {
 				fmt.Fprintf(os.Stderr, "Failed at: phase %d\n", *result.FailedPhase)
 				fmt.Fprintf(os.Stderr, "Reason:    %s\n", result.FailReason)

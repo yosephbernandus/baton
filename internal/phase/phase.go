@@ -74,6 +74,19 @@ func shouldSkip(p Phase, complexity string) bool {
 	return false
 }
 
+const (
+	L2StartPhase = 8  // implementation
+	L2EndPhase   = 15 // test_quality (inclusive)
+)
+
+func IsL2Phase(phaseID int) bool {
+	return phaseID >= L2StartPhase && phaseID <= L2EndPhase
+}
+
+func IsVerificationPhase(phaseID int) bool {
+	return (phaseID >= 9 && phaseID <= 11) || (phaseID >= 13 && phaseID <= 15)
+}
+
 func ValidComplexity(c string) bool {
 	switch c {
 	case ComplexityTrivial, ComplexitySmall, ComplexityMedium, ComplexityLarge:
