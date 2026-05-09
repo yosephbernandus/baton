@@ -205,33 +205,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseMsg:
-		switch msg.Action {
-		case tea.MouseActionPress:
-			if msg.Button == tea.MouseButtonLeft {
-				row := msg.Y
-				if row >= m.dividerRow && row <= m.dividerRow+1 {
-					m.dragging = true
-				}
-			}
-		case tea.MouseActionRelease:
+		if msg.Action == tea.MouseActionRelease {
 			m.dragging = false
-		case tea.MouseActionMotion:
-			if m.dragging && m.showOutput {
-				// title(2) + task header(1) = 3 rows of chrome above task list
-				topChrome := 3
-				// help(1) = 1 row below
-				available := m.height - topChrome - 1
-				if available > 0 {
-					ratio := float64(msg.Y-topChrome) / float64(available)
-					if ratio < 0.2 {
-						ratio = 0.2
-					}
-					if ratio > 0.8 {
-						ratio = 0.8
-					}
-					m.splitRatio = ratio
-					m.resizeAllViewports()
+		} else if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && m.showOutput {
+			// Wide hit area: ±2 rows around divider
+			if msg.Y >= m.dividerRow-2 && msg.Y <= m.dividerRow+2 {
+				m.dragging = true
+			}
+		}
+		if msg.Action == tea.MouseActionMotion && m.dragging && m.showOutput {
+			topChrome := 3
+			available := m.height - topChrome - 1
+			if available > 0 {
+				ratio := float64(msg.Y-topChrome) / float64(available)
+				if ratio < 0.2 {
+					ratio = 0.2
 				}
+				if ratio > 0.8 {
+					ratio = 0.8
+				}
+				m.splitRatio = ratio
+				m.resizeAllViewports()
 			}
 		}
 
@@ -281,6 +275,19 @@ func (m *Model) maxVisibleTasks() int {
 	return taskRows
 }
 
+func (m *Model) scrollIndicatorLines() int {
+	maxVisible := m.maxVisibleTasks()
+	total := len(m.taskOrder)
+	extra := 0
+	if m.taskScroll > 0 {
+		extra++
+	}
+	if m.taskScroll+maxVisible < total {
+		extra++
+	}
+	return extra
+}
+
 func (m *Model) outputViewportHeight() int {
 	maxTasks := m.maxVisibleTasks()
 	visibleTasks := maxTasks
@@ -290,8 +297,9 @@ func (m *Model) outputViewportHeight() int {
 	if visibleTasks == 0 {
 		visibleTasks = 1
 	}
-	// title(2) + task header(1) + visible tasks + divider(1) + output header(1) + border(2) + help(1)
-	chrome := 2 + 1 + visibleTasks + 1 + 1 + 2 + 1
+	indicators := m.scrollIndicatorLines()
+	// title(2) + task header(1) + visible tasks + scroll indicators + divider(1) + output header(1) + border(2) + help(1)
+	chrome := 2 + 1 + visibleTasks + indicators + 1 + 1 + 2 + 1
 	vpHeight := m.height - chrome
 	if vpHeight < 5 {
 		vpHeight = 5
