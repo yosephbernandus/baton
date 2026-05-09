@@ -35,6 +35,7 @@ type PipelineResult struct {
 	Duration        time.Duration
 	AttemptsByPhase map[int]int
 	L2Cycles        int
+	DirtyFiles      map[int][]string // phase ID → files changed
 }
 
 type Pipeline struct {
@@ -80,6 +81,7 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 	result := &PipelineResult{
 		PhasesSkipped:   skipped,
 		AttemptsByPhase: make(map[int]int),
+		DirtyFiles:      make(map[int][]string),
 	}
 
 	if p.manifest != nil {
@@ -263,7 +265,7 @@ func (p *Pipeline) executePhaseWithRetries(
 		}
 
 		scratchpadContent := scratchpad.ForPrompt()
-		phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, prevOutputs, scratchpadContent)
+		phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, prevOutputs, scratchpadContent, result.DirtyFiles)
 		phasePrompt = spec.BuildPromptWithProtocol(phasePrompt, taskID, p.cfg.TaskDir)
 
 		liveness := p.buildLiveness()
@@ -303,6 +305,18 @@ func (p *Pipeline) executePhaseWithRetries(
 			continue
 		}
 
+		// Heartbeat budget check
+		if budget := p.cfg.PhaseMachine.HeartbeatBudget; budget > 0 {
+			hbCount := countHeartbeats(runResult.Output)
+			if hbCount > budget {
+				budgetMsg := fmt.Sprintf("heartbeat budget exceeded: %d/%d", hbCount, budget)
+				_ = scratchpad.AppendAttempt(attempt, []string{budgetMsg}, budgetMsg)
+				lastFailReason = fmt.Sprintf("phase %d (%s): %s", ph.ID, ph.Name, budgetMsg)
+				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_budget_exceeded")
+				continue
+			}
+		}
+
 		completion := extractCompletion(runResult.Output, ph.CompletionSignal)
 
 		switch {
@@ -319,6 +333,9 @@ func (p *Pipeline) executePhaseWithRetries(
 				continue
 			}
 			prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
+			if len(runResult.FilesChanged) > 0 {
+				result.DirtyFiles[ph.ID] = runResult.FilesChanged
+			}
 			result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
 			result.AttemptsByPhase[ph.ID] = attempt
 			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
@@ -363,6 +380,9 @@ func (p *Pipeline) executePhaseWithRetries(
 					continue
 				}
 				prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
+				if len(runResult.FilesChanged) > 0 {
+					result.DirtyFiles[ph.ID] = runResult.FilesChanged
+				}
 				result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
 				result.AttemptsByPhase[ph.ID] = attempt
 				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
@@ -537,4 +557,15 @@ func extractNotes(output []string) []string {
 		}
 	}
 	return notes
+}
+
+func countHeartbeats(output []string) int {
+	count := 0
+	for _, line := range output {
+		mk, ok := proto.ParseMarker(line)
+		if ok && mk.Type == proto.MarkerHeartbeat {
+			count++
+		}
+	}
+	return count
 }

@@ -34,7 +34,7 @@ var roleDescriptions = map[string]string{
 	RoleTester:    "You are the TESTER. You write and run tests. You MUST NOT modify production code, only test files.",
 }
 
-func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhases int, prevOutputs map[int]string, scratchpadContent string) string {
+func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhases int, prevOutputs map[int]string, scratchpadContent string, dirtyFiles ...map[int][]string) string {
 	var b strings.Builder
 
 	b.WriteString(basePrompt)
@@ -63,6 +63,21 @@ func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhase
 			fmt.Fprintf(&b, "- Phase %d: %s\n", id, truncate(output, 500))
 		}
 		b.WriteString("\n")
+	}
+
+	if len(dirtyFiles) > 0 && dirtyFiles[0] != nil && IsVerificationPhase(ph.ID) {
+		df := dirtyFiles[0]
+		if len(df) > 0 {
+			b.WriteString("[MODIFIED FILES — VERIFY THESE]\n")
+			for phaseID, files := range df {
+				if phaseID < ph.ID {
+					for _, f := range files {
+						fmt.Fprintf(&b, "- Phase %d: %s\n", phaseID, f)
+					}
+				}
+			}
+			b.WriteString("\n")
+		}
 	}
 
 	if scratchpadContent != "" {

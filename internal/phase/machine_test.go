@@ -690,3 +690,121 @@ func TestPipelineBoundaryViolationTester(t *testing.T) {
 		t.Errorf("phase 13 attempts=%d, want 2", result.AttemptsByPhase[13])
 	}
 }
+
+func TestPipelineHeartbeatBudgetExceeded(t *testing.T) {
+	// Phase 1 outputs too many heartbeats → budget exceeded → retry
+	mr := &mockRunner{
+		results: []*runner.Result{
+			// Attempt 1: 5 heartbeats, budget is 3 → exceeded
+			{Status: "completed", Output: []string{
+				"BATON:H:working", "BATON:H:still working", "BATON:H:more",
+				"BATON:H:even more", "BATON:H:way too many",
+				"BATON:C:setup:done",
+			}},
+			// Attempt 2: 2 heartbeats, within budget
+			{Status: "completed", Output: []string{
+				"BATON:H:working", "BATON:H:done",
+				"BATON:C:setup:done",
+			}},
+			{Status: "completed", Output: []string{"BATON:C:implementation:done"}},
+			{Status: "completed", Output: []string{"BATON:C:completion:done"}},
+		},
+		errors: make([]error, 4),
+	}
+
+	cfg := testConfig(2)
+	cfg.PhaseMachine.HeartbeatBudget = 3
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexityTrivial})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed. Reason: %s", result.Status, result.FailReason)
+	}
+	if result.AttemptsByPhase[1] != 2 {
+		t.Errorf("phase 1 attempts=%d, want 2", result.AttemptsByPhase[1])
+	}
+}
+
+func TestPipelineHeartbeatBudgetExhausted(t *testing.T) {
+	// All attempts exceed budget
+	overBudget := &runner.Result{Status: "completed", Output: []string{
+		"BATON:H:1", "BATON:H:2", "BATON:H:3", "BATON:H:4", "BATON:H:5",
+		"BATON:C:setup:done",
+	}}
+	mr := &mockRunner{
+		results: []*runner.Result{overBudget, overBudget, overBudget},
+		errors:  make([]error, 3),
+	}
+
+	cfg := testConfig(2)
+	cfg.PhaseMachine.HeartbeatBudget = 3
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexityTrivial})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "failed" {
+		t.Errorf("status=%s, want failed", result.Status)
+	}
+	if !strings.Contains(result.FailReason, "heartbeat budget exceeded") {
+		t.Errorf("reason=%q, want 'heartbeat budget exceeded'", result.FailReason)
+	}
+}
+
+func TestPipelineDirtyFilesTracked(t *testing.T) {
+	mr := &mockRunner{
+		results: []*runner.Result{
+			{Status: "completed", Output: []string{"BATON:C:setup:done"}},
+			{Status: "completed", Output: []string{"BATON:C:implementation:done"},
+				FilesChanged: []string{"main.go", "config.go"}},
+			{Status: "completed", Output: []string{"BATON:C:completion:done"}},
+		},
+		errors: make([]error, 3),
+	}
+
+	cfg := testConfig(2)
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexityTrivial})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed", result.Status)
+	}
+	files, ok := result.DirtyFiles[8]
+	if !ok {
+		t.Fatal("expected dirty files for phase 8")
+	}
+	if len(files) != 2 {
+		t.Errorf("dirty files count=%d, want 2", len(files))
+	}
+}
+
+func TestCountHeartbeats(t *testing.T) {
+	output := []string{
+		"BATON:H:working",
+		"some output",
+		"BATON:H:still going",
+		"BATON:P:50:progress",
+		"BATON:H:almost done",
+		"BATON:C:setup:done",
+	}
+	if c := countHeartbeats(output); c != 3 {
+		t.Errorf("count=%d, want 3", c)
+	}
+}
+
+func TestCountHeartbeatsNone(t *testing.T) {
+	output := []string{"plain output", "BATON:C:setup:done"}
+	if c := countHeartbeats(output); c != 0 {
+		t.Errorf("count=%d, want 0", c)
+	}
+}

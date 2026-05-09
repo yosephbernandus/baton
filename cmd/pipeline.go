@@ -121,6 +121,12 @@ func newPipelineRunCmd() *cobra.Command {
 					fmt.Fprintf(os.Stderr, "  Phase %d: %d attempts\n", phaseID, attempts)
 				}
 			}
+			if len(result.DirtyFiles) > 0 {
+				fmt.Fprintf(os.Stderr, "Dirty files:\n")
+				for phaseID, files := range result.DirtyFiles {
+					fmt.Fprintf(os.Stderr, "  Phase %d: %v\n", phaseID, files)
+				}
+			}
 
 			_ = start // used via result.Duration
 

@@ -55,6 +55,7 @@ type PhaseMachineConfig struct {
 	ComplexityDefault    string  `yaml:"complexity_default"`
 	MaxL1Retries         int     `yaml:"max_l1_retries"`
 	MaxL2Cycles          int     `yaml:"max_l2_cycles"`
+	HeartbeatBudget      int     `yaml:"heartbeat_budget"`
 	LoopDetectionEnabled *bool   `yaml:"loop_detection_enabled,omitempty"`
 	LoopWindowSize       int     `yaml:"loop_window_size"`
 	LoopThreshold        float64 `yaml:"loop_similarity_threshold"`
