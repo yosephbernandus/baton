@@ -352,33 +352,6 @@ func TestPipelineLoopDetectionDisabled(t *testing.T) {
 
 // L2 tests use SMALL complexity which includes phases:
 // 1(setup), 2(triage), 3(discovery), 4(skill_discovery),
-// 8(implementation), 10(domain_compliance), 12(test_planning),
-// 13(testing), 14(coverage_verification), 15(test_quality), 16(completion)
-
-func smallPhaseResults(overrides map[string]*runner.Result) *mockRunner {
-	// SMALL active phases in order: 1,2,3,4,8,10,12,13,14,15,16
-	phases := []string{
-		"setup", "triage", "discovery", "skill_discovery",
-		"implementation", "domain_compliance", "test_planning",
-		"testing", "coverage_verification", "test_quality", "completion",
-	}
-	var results []*runner.Result
-	var errs []error
-	for _, name := range phases {
-		if r, ok := overrides[name]; ok {
-			results = append(results, r)
-			errs = append(errs, nil)
-		} else {
-			results = append(results, &runner.Result{
-				Status: "completed",
-				Output: []string{fmt.Sprintf("BATON:C:%s:done", name)},
-			})
-			errs = append(errs, nil)
-		}
-	}
-	return &mockRunner{results: results, errors: errs}
-}
-
 func TestPipelineL2LoopBack(t *testing.T) {
 	// domain_compliance (phase 10) fails on first pass, implementation reruns, then all pass
 	callCount := 0
