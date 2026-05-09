@@ -28,6 +28,12 @@ type Config struct {
 	OutputTailLines int                      `yaml:"output_tail_lines"`
 	PhaseMachine    PhaseMachineConfig       `yaml:"phase_machine"`
 	RoleModels      map[string]RoleModelConfig `yaml:"role_models"`
+	Skills          SkillsConfig               `yaml:"skills"`
+}
+
+type SkillsConfig struct {
+	Dir       string            `yaml:"dir"`
+	DomainMap map[string]string `yaml:"domain_map"`
 }
 
 type OrchestratorConfig struct {

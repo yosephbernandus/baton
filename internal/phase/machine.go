@@ -13,6 +13,7 @@ import (
 	"github.com/yosephbernandus/baton/internal/role"
 	"github.com/yosephbernandus/baton/internal/runner"
 	"github.com/yosephbernandus/baton/internal/session"
+	"github.com/yosephbernandus/baton/internal/skill"
 	"github.com/yosephbernandus/baton/internal/spec"
 	"github.com/yosephbernandus/baton/internal/task"
 )
@@ -91,6 +92,11 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 
 	projectBrief := brief.Load(p.cfg.ProjectBrief)
 	basePrompt := spec.BuildPrompt(p.spec, projectBrief)
+
+	skillContext := p.loadSkillContext()
+	if skillContext != "" {
+		basePrompt += "\n[DOMAIN CONTEXT]\n" + skillContext + "\n"
+	}
 
 	prevOutputs := make(map[int]string)
 	l2Cycles := 0
@@ -452,6 +458,23 @@ func (p *Pipeline) newLoopDetector() *LoopDetector {
 	threshold := p.cfg.PhaseMachine.LoopThreshold
 	tailLines := p.cfg.PhaseMachine.LoopTailLines
 	return NewLoopDetector(window, threshold, tailLines)
+}
+
+func (p *Pipeline) loadSkillContext() string {
+	domain := ""
+	if p.spec != nil {
+		domain = p.spec.Domain
+	}
+	if domain == "" && p.spec != nil {
+		domain = skill.InferDomain(p.spec.ContextFiles)
+	}
+	if domain == "" {
+		return ""
+	}
+
+	router := skill.NewRouter(p.cfg.Skills.Dir, p.cfg.Skills.DomainMap)
+	ctx, _ := router.LoadContext(domain)
+	return ctx
 }
 
 func (p *Pipeline) resolveMaxRetries() int {

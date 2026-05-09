@@ -3,6 +3,8 @@ package phase
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -899,5 +901,126 @@ func TestToolRestrictionFlagsNilForDeveloper(t *testing.T) {
 	devArgs := mr.extraArgs[1] // phase 8, developer
 	if len(devArgs) != 0 {
 		t.Errorf("developer should have no tool restriction flags, got %v", devArgs)
+	}
+}
+
+func TestSkillContextInjectedIntoPrompt(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "skills", "backend")
+	_ = os.MkdirAll(skillDir, 0o755)
+	_ = os.WriteFile(filepath.Join(skillDir, "conventions.md"), []byte("Always use structured logging"), 0o644)
+
+	mr := &mockRunner{
+		results: []*runner.Result{
+			{Status: "completed", Output: []string{"BATON:C:setup:done"}},
+		},
+		errors: []error{nil},
+	}
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{Runtime: "mock", Model: "test"},
+		Runtimes: map[string]config.RuntimeConfig{
+			"mock": {Command: "echo"},
+		},
+		TaskDir:         filepath.Join(dir, "tasks"),
+		AbsoluteTimeout: "5m",
+		SilenceTimeout:  "2m",
+		Skills: config.SkillsConfig{
+			Dir: filepath.Join(dir, "skills"),
+		},
+	}
+
+	s := testSpec()
+	s.Domain = "backend"
+
+	p := NewPipeline(cfg, mr, nil, nil, s, "test", PipelineConfig{
+		Complexity: ComplexityTrivial,
+	})
+
+	_, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mr.calls < 1 {
+		t.Fatal("expected at least 1 call")
+	}
+	if !strings.Contains(mr.prompts[0], "Always use structured logging") {
+		t.Error("skill context not injected into prompt")
+	}
+	if !strings.Contains(mr.prompts[0], "DOMAIN CONTEXT") {
+		t.Error("missing DOMAIN CONTEXT header")
+	}
+}
+
+func TestSkillContextInferredFromFiles(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "skills", "go")
+	_ = os.MkdirAll(skillDir, 0o755)
+	_ = os.WriteFile(filepath.Join(skillDir, "patterns.md"), []byte("Error wrapping with fmt.Errorf"), 0o644)
+
+	mr := &mockRunner{
+		results: []*runner.Result{
+			{Status: "completed", Output: []string{"BATON:C:setup:done"}},
+		},
+		errors: []error{nil},
+	}
+
+	// Create dummy context files so spec validation doesn't complain
+	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "runner.go"), []byte("package runner"), 0o644)
+
+	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{Runtime: "mock", Model: "test"},
+		Runtimes: map[string]config.RuntimeConfig{
+			"mock": {Command: "echo"},
+		},
+		TaskDir:         filepath.Join(dir, "tasks"),
+		AbsoluteTimeout: "5m",
+		SilenceTimeout:  "2m",
+		Skills: config.SkillsConfig{
+			Dir: filepath.Join(dir, "skills"),
+		},
+	}
+
+	s := &spec.Spec{
+		What:               "test",
+		Why:                "testing",
+		Constraints:        []string{},
+		ContextFiles:       []string{filepath.Join(dir, "main.go"), filepath.Join(dir, "runner.go")},
+		AcceptanceCriteria: []string{"works"},
+	}
+
+	p := NewPipeline(cfg, mr, nil, nil, s, "test", PipelineConfig{
+		Complexity: ComplexityTrivial,
+	})
+
+	_, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(mr.prompts[0], "Error wrapping") {
+		t.Error("inferred skill context not injected")
+	}
+}
+
+func TestSkillContextEmptyWhenNoDomain(t *testing.T) {
+	mr := &mockRunner{
+		results: []*runner.Result{
+			{Status: "completed", Output: []string{"BATON:C:setup:done"}},
+		},
+		errors: []error{nil},
+	}
+	cfg := testConfig(0)
+	cfg.TaskDir = t.TempDir()
+
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{
+		Complexity: ComplexityTrivial,
+	})
+
+	_, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(mr.prompts[0], "DOMAIN CONTEXT") {
+		t.Error("should not inject domain context when no domain")
 	}
 }

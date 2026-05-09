@@ -19,6 +19,7 @@ type Spec struct {
 	WritesTo           []string      `yaml:"writes_to"`
 	Examples           []Example     `yaml:"examples"`
 	AcceptanceChecks   []Check       `yaml:"acceptance_checks"`
+	Domain             string        `yaml:"domain,omitempty"`
 	EstimatedComplexity string       `yaml:"estimated_complexity,omitempty"`
 	Criticality        string        `yaml:"criticality"`
 	SilenceTimeout     string        `yaml:"silence_timeout,omitempty"`
