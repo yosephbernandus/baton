@@ -54,6 +54,13 @@ var (
 
 	scrollInfoStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241"))
+
+	dividerStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("241"))
+
+	dividerActiveStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("62")).
+				Bold(true)
 )
 
 type focusPanel int
@@ -83,6 +90,10 @@ type Model struct {
 	tasks      map[string]*taskState
 	taskOrder  []string
 	cursor     int
+	taskScroll int     // first visible task row index
+	splitRatio float64 // fraction of available height for task list (0.2–0.8)
+	dragging   bool    // mouse dragging the divider
+	dividerRow int     // screen row where divider was rendered
 	width      int
 	height     int
 	eventCh    <-chan events.Event
@@ -107,9 +118,10 @@ func NewModel(eventPath string) (*Model, error) {
 	}
 
 	return &Model{
-		tasks:   make(map[string]*taskState),
-		eventCh: ch,
-		cancel:  cancel,
+		tasks:      make(map[string]*taskState),
+		eventCh:    ch,
+		cancel:     cancel,
+		splitRatio: 0.4,
 	}, nil
 }
 
@@ -156,6 +168,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.showOutput {
 				m.focus = focusTaskList
 			}
+		case "+", "=":
+			if m.showOutput && m.splitRatio < 0.8 {
+				m.splitRatio += 0.05
+				m.resizeAllViewports()
+			}
+		case "-", "_":
+			if m.showOutput && m.splitRatio > 0.2 {
+				m.splitRatio -= 0.05
+				m.resizeAllViewports()
+			}
 		default:
 			if m.focus == focusOutput && m.showOutput && m.cursor < len(m.taskOrder) {
 				t := m.tasks[m.taskOrder[m.cursor]]
@@ -169,13 +191,46 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "up", "k":
 					if m.cursor > 0 {
 						m.cursor--
+						m.scrollToCursor()
 						m.onCursorChanged()
 					}
 				case "down", "j":
 					if m.cursor < len(m.taskOrder)-1 {
 						m.cursor++
+						m.scrollToCursor()
 						m.onCursorChanged()
 					}
+				}
+			}
+		}
+
+	case tea.MouseMsg:
+		switch msg.Action {
+		case tea.MouseActionPress:
+			if msg.Button == tea.MouseButtonLeft {
+				row := msg.Y
+				if row >= m.dividerRow && row <= m.dividerRow+1 {
+					m.dragging = true
+				}
+			}
+		case tea.MouseActionRelease:
+			m.dragging = false
+		case tea.MouseActionMotion:
+			if m.dragging && m.showOutput {
+				// title(2) + task header(1) = 3 rows of chrome above task list
+				topChrome := 3
+				// help(1) = 1 row below
+				available := m.height - topChrome - 1
+				if available > 0 {
+					ratio := float64(msg.Y-topChrome) / float64(available)
+					if ratio < 0.2 {
+						ratio = 0.2
+					}
+					if ratio > 0.8 {
+						ratio = 0.8
+					}
+					m.splitRatio = ratio
+					m.resizeAllViewports()
 				}
 			}
 		}
@@ -183,18 +238,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		for _, id := range m.taskOrder {
-			t := m.tasks[id]
-			if t.vpReady {
-				vpHeight := m.outputViewportHeight()
-				vpWidth := m.width - 4
-				if vpWidth < 20 {
-					vpWidth = 20
-				}
-				t.viewport.Width = vpWidth
-				t.viewport.Height = vpHeight
-			}
-		}
+		m.resizeAllViewports()
 
 	case eventMsg:
 		m.processEvent(events.Event(msg))
@@ -224,20 +268,81 @@ func (m *Model) ensureViewport(t *taskState) {
 	m.setViewportKeysEnabled(t, m.focus == focusOutput)
 }
 
+func (m *Model) maxVisibleTasks() int {
+	if !m.showOutput {
+		return m.height - 5
+	}
+	// Split available space by ratio
+	available := m.height - 8 // title(2) + task header(1) + divider(1) + output header(1) + border(2) + help(1)
+	taskRows := int(float64(available) * m.splitRatio)
+	if taskRows < 3 {
+		taskRows = 3
+	}
+	return taskRows
+}
+
 func (m *Model) outputViewportHeight() int {
-	taskRows := len(m.taskOrder)
-	if taskRows == 0 {
-		taskRows = 1
+	maxTasks := m.maxVisibleTasks()
+	visibleTasks := maxTasks
+	if len(m.taskOrder) < visibleTasks {
+		visibleTasks = len(m.taskOrder)
 	}
-	chrome := 2 + 1 + taskRows + 1 + 1 + 1 + 2 + 1
+	if visibleTasks == 0 {
+		visibleTasks = 1
+	}
+	// title(2) + task header(1) + visible tasks + divider(1) + output header(1) + border(2) + help(1)
+	chrome := 2 + 1 + visibleTasks + 1 + 1 + 2 + 1
 	vpHeight := m.height - chrome
-	if vpHeight < 3 {
-		vpHeight = 3
-	}
-	if vpHeight > 25 {
-		vpHeight = 25
+	if vpHeight < 5 {
+		vpHeight = 5
 	}
 	return vpHeight
+}
+
+func (m *Model) scrollToCursor() {
+	maxVisible := m.maxVisibleTasks()
+	if m.cursor < m.taskScroll {
+		m.taskScroll = m.cursor
+	}
+	if m.cursor >= m.taskScroll+maxVisible {
+		m.taskScroll = m.cursor - maxVisible + 1
+	}
+}
+
+func (m *Model) resizeAllViewports() {
+	m.scrollToCursor()
+	vpHeight := m.outputViewportHeight()
+	vpWidth := m.width - 4
+	if vpWidth < 20 {
+		vpWidth = 20
+	}
+	for _, id := range m.taskOrder {
+		t := m.tasks[id]
+		if t.vpReady {
+			t.viewport.Width = vpWidth
+			t.viewport.Height = vpHeight
+		}
+	}
+}
+
+func (m *Model) renderDivider() string {
+	style := dividerStyle
+	label := "─── ↕ drag ───"
+	if m.dragging {
+		style = dividerActiveStyle
+		label = "─── ↕ drag ───"
+	}
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+	labelLen := 14
+	side := (w - labelLen) / 2
+	if side < 0 {
+		side = 0
+	}
+	line := strings.Repeat("─", side) + label + strings.Repeat("─", w-side-labelLen)
+	return style.Render(line)
 }
 
 func (m *Model) setViewportKeysEnabled(t *taskState, enabled bool) {
@@ -269,15 +374,23 @@ func (m *Model) View() string {
 	}
 
 	var b strings.Builder
+	lineCount := 0
 
 	title := titleStyle.Render(" Baton Monitor ")
 	b.WriteString(title)
 	b.WriteString("\n\n")
+	lineCount += 2
 
-	b.WriteString(m.renderTaskTable())
-	b.WriteString("\n")
+	taskTable := m.renderTaskTable()
+	b.WriteString(taskTable)
+	lineCount += strings.Count(taskTable, "\n")
 
 	if m.showOutput && len(m.taskOrder) > 0 {
+		m.dividerRow = lineCount
+		b.WriteString(m.renderDivider())
+		b.WriteString("\n")
+		lineCount++
+
 		b.WriteString(m.renderOutput())
 		b.WriteString("\n")
 	}
@@ -289,9 +402,9 @@ func (m *Model) View() string {
 
 	var helpText string
 	if m.showOutput && m.focus == focusOutput {
-		helpText = "[↑/↓/j/k] scroll  [pgup/pgdn] page  [tab] task list  [enter] close  [q] quit"
+		helpText = "[↑/↓/j/k] scroll  [pgup/pgdn] page  [tab] task list  [+/-] resize  [enter] close  [q] quit"
 	} else {
-		helpText = "[↑/↓] select  [enter] output  [tab] focus output  [K] kill  [c] clear  [q] quit"
+		helpText = "[↑/↓] select  [enter] output  [tab] focus output  [+/-] resize  [K] kill  [c] clear  [q] quit"
 	}
 	help := helpStyle.Render(helpText)
 	b.WriteString(help)
@@ -392,12 +505,33 @@ func (m *Model) renderTaskTable() string {
 		focusMarker = "▸"
 		hStyle = focusedHeaderStyle
 	}
-	header := fmt.Sprintf("%s %-16s %-12s %-12s %-22s %-10s",
-		focusMarker, "TASK ID", "RUNTIME", "MODEL", "STATUS", "DURATION")
+
+	totalTasks := len(m.taskOrder)
+	maxVisible := m.maxVisibleTasks()
+
+	scrollHint := ""
+	if totalTasks > maxVisible {
+		scrollHint = fmt.Sprintf(" [%d/%d]", m.cursor+1, totalTasks)
+	}
+
+	header := fmt.Sprintf("%s %-16s %-12s %-12s %-22s %-10s%s",
+		focusMarker, "TASK ID", "RUNTIME", "MODEL", "STATUS", "DURATION", scrollHint)
 	b.WriteString(hStyle.Render(header))
 	b.WriteString("\n")
 
-	for i, id := range m.taskOrder {
+	// Show scroll-up indicator
+	if m.taskScroll > 0 {
+		b.WriteString(scrollInfoStyle.Render("  ↑ more tasks above"))
+		b.WriteString("\n")
+	}
+
+	end := m.taskScroll + maxVisible
+	if end > totalTasks {
+		end = totalTasks
+	}
+
+	for i := m.taskScroll; i < end; i++ {
+		id := m.taskOrder[i]
 		t := m.tasks[id]
 
 		status := m.styledStatus(t)
@@ -421,6 +555,12 @@ func (m *Model) renderTaskTable() string {
 			line = selectedStyle.Render(line)
 		}
 		b.WriteString(line)
+		b.WriteString("\n")
+	}
+
+	// Show scroll-down indicator
+	if end < totalTasks {
+		b.WriteString(scrollInfoStyle.Render("  ↓ more tasks below"))
 		b.WriteString("\n")
 	}
 
