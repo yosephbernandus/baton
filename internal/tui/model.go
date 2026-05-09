@@ -3,10 +3,10 @@ package tui
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/yosephbernandus/baton/internal/events"
@@ -33,28 +33,50 @@ var (
 	selectedStyle = lipgloss.NewStyle().
 			Background(lipgloss.Color("236"))
 
-	outputStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245"))
-
 	bannerStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("201")).
 			Bold(true)
 
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241"))
+
+	focusedBorderStyle = lipgloss.NewStyle().
+				BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("62"))
+
+	unfocusedBorderStyle = lipgloss.NewStyle().
+				BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("241"))
+
+	focusedHeaderStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("62"))
+
+	scrollInfoStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("241"))
+)
+
+type focusPanel int
+
+const (
+	focusTaskList focusPanel = iota
+	focusOutput
 )
 
 type taskState struct {
-	ID        string
-	Runtime   string
-	Model     string
-	Status    string
-	Duration  string
-	StartedAt time.Time
-	Output    []string
-	Clarify   string
-	Progress  string
-	Stuck     bool
+	ID           string
+	Runtime      string
+	Model        string
+	Status       string
+	Duration     string
+	StartedAt    time.Time
+	Output       []string
+	Clarify      string
+	Progress     string
+	Stuck        bool
+	viewport     viewport.Model
+	vpReady      bool
+	userScrolled bool
 }
 
 type Model struct {
@@ -68,6 +90,7 @@ type Model struct {
 	showOutput bool
 	quitting   bool
 	killCh     chan string
+	focus      focusPanel
 }
 
 type eventMsg events.Event
@@ -102,16 +125,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			m.cancel()
 			return m, tea.Quit
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < len(m.taskOrder)-1 {
-				m.cursor++
-			}
-		case "enter":
-			m.showOutput = !m.showOutput
 		case "K":
 			if m.cursor < len(m.taskOrder) {
 				id := m.taskOrder[m.cursor]
@@ -125,11 +138,63 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "c":
 			m.clearStale()
+		case "tab":
+			if !m.showOutput {
+				m.showOutput = true
+				m.focus = focusOutput
+				m.onCursorChanged()
+			} else {
+				if m.focus == focusTaskList {
+					m.focus = focusOutput
+				} else {
+					m.focus = focusTaskList
+				}
+				m.onCursorChanged()
+			}
+		case "enter":
+			m.showOutput = !m.showOutput
+			if !m.showOutput {
+				m.focus = focusTaskList
+			}
+		default:
+			if m.focus == focusOutput && m.showOutput && m.cursor < len(m.taskOrder) {
+				t := m.tasks[m.taskOrder[m.cursor]]
+				m.ensureViewport(t)
+				var cmd tea.Cmd
+				t.viewport, cmd = t.viewport.Update(msg)
+				t.userScrolled = !t.viewport.AtBottom()
+				return m, cmd
+			} else if m.focus == focusTaskList || !m.showOutput {
+				switch msg.String() {
+				case "up", "k":
+					if m.cursor > 0 {
+						m.cursor--
+						m.onCursorChanged()
+					}
+				case "down", "j":
+					if m.cursor < len(m.taskOrder)-1 {
+						m.cursor++
+						m.onCursorChanged()
+					}
+				}
+			}
 		}
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		for _, id := range m.taskOrder {
+			t := m.tasks[id]
+			if t.vpReady {
+				vpHeight := m.outputViewportHeight()
+				vpWidth := m.width - 4
+				if vpWidth < 20 {
+					vpWidth = 20
+				}
+				t.viewport.Width = vpWidth
+				t.viewport.Height = vpHeight
+			}
+		}
 
 	case eventMsg:
 		m.processEvent(events.Event(msg))
@@ -140,6 +205,62 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m *Model) ensureViewport(t *taskState) {
+	if t.vpReady {
+		return
+	}
+	vpHeight := m.outputViewportHeight()
+	vpWidth := m.width - 4
+	if vpWidth < 20 {
+		vpWidth = 20
+	}
+	t.viewport = viewport.New(vpWidth, vpHeight)
+	t.viewport.MouseWheelEnabled = true
+	t.viewport.SetContent(strings.Join(t.Output, "\n"))
+	t.viewport.GotoBottom()
+	t.vpReady = true
+	m.setViewportKeysEnabled(t, m.focus == focusOutput)
+}
+
+func (m *Model) outputViewportHeight() int {
+	taskRows := len(m.taskOrder)
+	if taskRows == 0 {
+		taskRows = 1
+	}
+	chrome := 2 + 1 + taskRows + 1 + 1 + 1 + 2 + 1
+	vpHeight := m.height - chrome
+	if vpHeight < 3 {
+		vpHeight = 3
+	}
+	if vpHeight > 25 {
+		vpHeight = 25
+	}
+	return vpHeight
+}
+
+func (m *Model) setViewportKeysEnabled(t *taskState, enabled bool) {
+	t.viewport.KeyMap.Up.SetEnabled(enabled)
+	t.viewport.KeyMap.Down.SetEnabled(enabled)
+	t.viewport.KeyMap.PageUp.SetEnabled(enabled)
+	t.viewport.KeyMap.PageDown.SetEnabled(enabled)
+	t.viewport.KeyMap.HalfPageUp.SetEnabled(enabled)
+	t.viewport.KeyMap.HalfPageDown.SetEnabled(enabled)
+}
+
+func (m *Model) onCursorChanged() {
+	for _, id := range m.taskOrder {
+		t := m.tasks[id]
+		if t.vpReady {
+			m.setViewportKeysEnabled(t, false)
+		}
+	}
+	if m.cursor < len(m.taskOrder) && m.showOutput {
+		t := m.tasks[m.taskOrder[m.cursor]]
+		m.ensureViewport(t)
+		m.setViewportKeysEnabled(t, m.focus == focusOutput)
+	}
 }
 
 func (m *Model) View() string {
@@ -166,7 +287,13 @@ func (m *Model) View() string {
 		b.WriteString("\n")
 	}
 
-	help := helpStyle.Render("[↑/↓] select  [enter] output  [K] kill  [c] clear  [q] quit")
+	var helpText string
+	if m.showOutput && m.focus == focusOutput {
+		helpText = "[↑/↓/j/k] scroll  [pgup/pgdn] page  [tab] task list  [enter] close  [q] quit"
+	} else {
+		helpText = "[↑/↓] select  [enter] output  [tab] focus output  [K] kill  [c] clear  [q] quit"
+	}
+	help := helpStyle.Render(helpText)
 	b.WriteString(help)
 
 	return b.String()
@@ -200,8 +327,15 @@ func (m *Model) processEvent(ev events.Event) {
 	case "output":
 		if line, ok := ev.Data["line"].(string); ok {
 			t.Output = append(t.Output, line)
-			if len(t.Output) > 200 {
-				t.Output = t.Output[len(t.Output)-200:]
+			if len(t.Output) > 500 {
+				t.Output = t.Output[len(t.Output)-500:]
+			}
+			if t.vpReady {
+				wasAtBottom := t.viewport.AtBottom()
+				t.viewport.SetContent(strings.Join(t.Output, "\n"))
+				if wasAtBottom || !t.userScrolled {
+					t.viewport.GotoBottom()
+				}
 			}
 		}
 	case "task_completed":
@@ -252,14 +386,16 @@ func (m *Model) processEvent(ev events.Event) {
 func (m *Model) renderTaskTable() string {
 	var b strings.Builder
 
-	header := fmt.Sprintf("  %-16s %-12s %-12s %-22s %-10s",
-		"TASK ID", "RUNTIME", "MODEL", "STATUS", "DURATION")
-	b.WriteString(headerStyle.Render(header))
+	focusMarker := " "
+	hStyle := headerStyle
+	if m.focus == focusTaskList || !m.showOutput {
+		focusMarker = "▸"
+		hStyle = focusedHeaderStyle
+	}
+	header := fmt.Sprintf("%s %-16s %-12s %-12s %-22s %-10s",
+		focusMarker, "TASK ID", "RUNTIME", "MODEL", "STATUS", "DURATION")
+	b.WriteString(hStyle.Render(header))
 	b.WriteString("\n")
-
-	sorted := make([]string, len(m.taskOrder))
-	copy(sorted, m.taskOrder)
-	sort.Strings(sorted)
 
 	for i, id := range m.taskOrder {
 		t := m.tasks[id]
@@ -330,35 +466,33 @@ func (m *Model) renderOutput() string {
 	if m.cursor >= len(m.taskOrder) {
 		return ""
 	}
-
 	id := m.taskOrder[m.cursor]
 	t := m.tasks[id]
+	m.ensureViewport(t)
 
 	var b strings.Builder
-	header := fmt.Sprintf("OUTPUT: %s (%s/%s)", t.ID, t.Runtime, t.Model)
-	b.WriteString(headerStyle.Render(header))
+	focusMarker := " "
+	hStyle := headerStyle
+	if m.focus == focusOutput {
+		focusMarker = "▸"
+		hStyle = focusedHeaderStyle
+	}
+	header := fmt.Sprintf("%s OUTPUT: %s (%s/%s)", focusMarker, t.ID, t.Runtime, t.Model)
+	b.WriteString(hStyle.Render(header))
+
+	totalLines := t.viewport.TotalLineCount()
+	scrollPct := t.viewport.ScrollPercent()
+	scrollInfo := fmt.Sprintf("  [%d lines · %.0f%%]", totalLines, scrollPct*100)
+	b.WriteString(scrollInfoStyle.Render(scrollInfo))
 	b.WriteString("\n")
 
-	maxLines := 10
-	if m.height > 30 {
-		maxLines = 15
+	vpContent := t.viewport.View()
+	borderStyle := unfocusedBorderStyle
+	if m.focus == focusOutput {
+		borderStyle = focusedBorderStyle
 	}
-
-	start := 0
-	if len(t.Output) > maxLines {
-		start = len(t.Output) - maxLines
-	}
-
-	for _, line := range t.Output[start:] {
-		b.WriteString(outputStyle.Render("  │ " + truncate(line, m.width-6)))
-		b.WriteString("\n")
-	}
-
-	if len(t.Output) == 0 {
-		b.WriteString(outputStyle.Render("  │ (no output)"))
-		b.WriteString("\n")
-	}
-
+	b.WriteString(borderStyle.Render(vpContent))
+	b.WriteString("\n")
 	return b.String()
 }
 
@@ -387,6 +521,7 @@ func (m *Model) clearStale() {
 	if m.cursor >= len(m.taskOrder) && m.cursor > 0 {
 		m.cursor = len(m.taskOrder) - 1
 	}
+	m.onCursorChanged()
 }
 
 func (m *Model) SetKillChannel(ch chan string) {

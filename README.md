@@ -226,7 +226,9 @@ go build -o baton .
 
 ### Download binary manually
 
-Pre-built binaries for Linux, macOS, and Windows (amd64/arm64) are available on the [Releases](https://github.com/yosephbernandus/baton/releases) page.
+Pre-built binaries for Linux and macOS (amd64/arm64) are available on the [Releases](https://github.com/yosephbernandus/baton/releases) page.
+
+**Platform support:** macOS and Linux only. Windows is not supported (Unix domain sockets required for IPC).
 
 ## Quick Start
 
@@ -268,6 +270,8 @@ baton run --runtime opencode --model kimi --spec .baton/specs/my-task.yaml
 | `baton status` | List tasks and their statuses |
 | `baton list` | List configured runtimes and availability |
 | `baton result <task-id>` | Show task result details |
+| `baton progress <task-id>` | Show worker progress markers |
+| `baton guide <task-id>` | Send guidance to a running worker |
 | `baton monitor` | Live TUI dashboard |
 | `baton config get/set` | Read or write config values |
 | `baton cost` | Show cost tracking summary |
@@ -281,10 +285,81 @@ baton run --runtime opencode --model kimi --spec .baton/specs/my-task.yaml
 --prompt         Inline prompt (requires --skip-validation)
 --task-id        Task identifier (default: task-{timestamp})
 --context-files  Comma-separated context files (with --prompt)
---timeout        Max time before killing worker (default: 10m)
+--timeout        Max time before killing worker (default: 60m)
 --json           Output task record as JSON
 --auto-route     Auto-select runtime/model from routing rules
 --skip-validation  Skip spec validation
+```
+
+## Real-Time Communication Protocol
+
+Baton uses a three-layer IPC architecture for worker↔orchestrator communication:
+
+### Layer 1: Stdout Markers (worker → baton)
+
+Workers print compact text markers to stdout. Token-optimized (LLMs pay per character):
+
+```
+BATON:H:reading codebase              # heartbeat
+BATON:P:30:implementing auth          # progress (percent:message)
+BATON:S:which schema v1 or v2?        # stuck (question)
+BATON:E:build failed                  # error
+BATON:M:all tests passing             # milestone
+```
+
+### Layer 2: Unix Domain Socket (baton ↔ orchestrator/CLI)
+
+Per-task socket at `.baton/tasks/{id}/baton.sock`. Bidirectional JSON push:
+
+```json
+{"m":"progress","p":30,"msg":"implementing auth"}
+{"m":"guide","id":1,"msg":"use v2 schema","from":"orchestrator"}
+{"m":"ok","id":1}
+```
+
+### Layer 3: Filesystem Audit Trail
+
+events.ndjson + task.yaml persist everything for debugging and TUI replay.
+
+### Communication Flow
+
+```
+Orchestrator                    baton run                     Worker
+    |                              |                            |
+    |                              |  (spawns process)          |
+    |                              |<--- BATON:P:20:reading ----|  stdout
+    |                              |<--- BATON:S:question? -----|  stdout
+    |                              |                            |
+    |--- baton guide --msg "v2" -->|  (socket)                  |
+    |<-- acknowledged ------------|                            |
+    |                              |--- writes inbox.ndjson --->|  file
+    |                              |<--- BATON:M:done ----------|  stdout
+    |                              |                            |
+    |<-- exit 0, completed --------|                            |
+```
+
+### Using the Protocol
+
+**Monitor progress:**
+```bash
+baton progress <task-id>           # historical (from events)
+baton progress <task-id> --watch   # live stream via socket
+```
+
+**Send guidance to stuck worker:**
+```bash
+baton guide <task-id> --msg "use v2 schema" --by orchestrator
+```
+
+**Orchestrator loop (automated):**
+```bash
+result=$(./baton run --spec specs/task.yaml --json --task-id task-42)
+status=$(echo "$result" | jq -r '.status')
+
+if [ "$status" = "needs_clarification" ]; then
+  question=$(echo "$result" | jq -r '.escalation.worker_clarification')
+  # orchestrator reasons about question, then re-runs with answer
+fi
 ```
 
 ## Architecture
