@@ -97,6 +97,9 @@ func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhase
 	return b.String()
 }
 
+func PhaseDescription(name string) string { return phaseDescriptions[name] }
+func RoleDescription(role string) string  { return roleDescriptions[role] }
+
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s

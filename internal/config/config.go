@@ -32,6 +32,7 @@ type Config struct {
 	Advisor         AdvisorConfig              `yaml:"escalation_advisor"`
 	Feedback        FeedbackConfig             `yaml:"feedback"`
 	Annealing       AnnealingConfig            `yaml:"annealing"`
+	WorkerProtocol  WorkerProtocolConfig       `yaml:"worker_protocol"`
 }
 
 type AdvisorConfig struct {
@@ -62,6 +63,7 @@ type RuntimeConfig struct {
 	Positional      []string          `yaml:"positional"`
 	Models          []string          `yaml:"models"`
 	ToolRestriction *ToolRestriction  `yaml:"tool_restriction,omitempty"`
+	PromptMode      string            `yaml:"prompt_mode,omitempty"` // "stdin" to pipe prompt via stdin instead of CLI arg
 }
 
 type ToolRestriction struct {
@@ -104,6 +106,13 @@ type AnnealingConfig struct {
 	AutoApplyMaxRisk string `yaml:"auto_apply_max_risk"`
 	MinConfidence   string `yaml:"min_confidence"`
 	PatchDir        string `yaml:"patch_dir"`
+}
+
+type WorkerProtocolConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	StuckTimeout  string `yaml:"stuck_timeout"`
+	WatchInterval string `yaml:"watch_interval"`
+	BatonBinary   string `yaml:"baton_binary"`
 }
 
 type RoutingConfig struct {

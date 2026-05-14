@@ -5,6 +5,7 @@ package runner
 import (
 	"context"
 	"os/exec"
+	"strings"
 	"syscall"
 
 	"github.com/yosephbernandus/baton/internal/config"
@@ -16,6 +17,9 @@ func (r *Runner) buildCommand(_ context.Context, rt *config.RuntimeConfig, model
 	args = append(args, extraArgs...)
 	cmd := exec.Command(rt.Command, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if rt.PromptMode == "stdin" {
+		cmd.Stdin = strings.NewReader(prompt)
+	}
 	return cmd
 }
 

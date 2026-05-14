@@ -294,10 +294,13 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 
 func buildArgs(rt *config.RuntimeConfig, model, prompt string, s *spec.Spec) []string {
 	var args []string
+	stdinMode := rt.PromptMode == "stdin"
 
 	for _, p := range rt.Positional {
 		if p == "{{prompt}}" {
-			args = append(args, prompt)
+			if !stdinMode {
+				args = append(args, prompt)
+			}
 		} else {
 			args = append(args, p)
 		}
@@ -311,7 +314,7 @@ func buildArgs(rt *config.RuntimeConfig, model, prompt string, s *spec.Spec) []s
 		}
 	}
 	args = append(args, rt.ExtraFlags...)
-	if rt.PromptFlag != "" {
+	if rt.PromptFlag != "" && !stdinMode {
 		args = append(args, rt.PromptFlag, prompt)
 	}
 
