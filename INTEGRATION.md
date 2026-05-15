@@ -705,3 +705,5 @@ Keep in git:
 | Worker stuck in loop | Loop detection triggers after 3 similar outputs. Escalates to L2 or advisor. |
 | No patterns in feedback | Need more event data. Run more tasks. Lower `min_occurrences` if needed. |
 | Advisor not responding | Check `escalation_advisor.enabled: true` and runtime/model are valid. Falls back to context dump. |
+| OpenCode fails immediately | OpenCode uses positional args, not `prompt_flag`. Use `positional: ["run", "{{prompt}}"]` and `model_flag: "-m"`. See README OpenCode section. |
+| Monitor shows stale events | Clear with `> .baton/events.ndjson` or `rm .baton/events.ndjson` |

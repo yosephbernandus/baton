@@ -38,6 +38,7 @@ func main() {
 		cmd.NewFeedbackCmd(),
 		cmd.NewAnnealCmd(),
 		cmd.NewWorkerCmd(),
+		cmd.NewInitCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

@@ -272,7 +272,7 @@ baton run --runtime opencode --model kimi --spec .baton/specs/my-task.yaml
 | `baton result <task-id>` | Show task result details |
 | `baton progress <task-id>` | Show worker progress markers |
 | `baton guide <task-id>` | Send guidance to a running worker |
-| `baton monitor` | Live TUI dashboard |
+| `baton monitor` | Live TUI dashboard (tails `.baton/events.ndjson`) |
 | `baton config get/set` | Read or write config values |
 | `baton cost` | Show cost tracking summary |
 
@@ -516,13 +516,31 @@ All runtime state lives in `.baton/` at the project root:
     decisions.yaml     # persisted decisions
 ```
 
+## Clearing the Monitor
+
+`baton monitor` tails `.baton/events.ndjson`. To reset and start fresh:
+
+```bash
+# Clear all events (monitor will show empty)
+> .baton/events.ndjson
+
+# Or remove and let baton recreate it
+rm .baton/events.ndjson
+```
+
+To clear task records too:
+
+```bash
+rm -rf .baton/tasks/
+```
+
 ## Supported Runtimes
 
 Any CLI tool that accepts model, prompt, and optional context flags:
 
 | Runtime | Command | Status |
 |---------|---------|--------|
-| OpenCode | `opencode -m <model> -p <prompt>` | Primary |
+| OpenCode | `opencode run <prompt> --model <model>` | Primary |
 | aider | `aider --model <model> --message <prompt>` | Supported |
 | pi-agent | `pi-agent --model <model> --prompt <prompt>` | Supported |
 | Custom | Any CLI matching the flag pattern | Via config |

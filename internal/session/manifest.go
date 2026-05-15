@@ -126,6 +126,9 @@ func (m *Manifest) LastCompletedPhase() int {
 	return max
 }
 
+func (m *Manifest) RemainingL1Retries(max int) int { return max - m.Budget.L1RetriesTotal }
+func (m *Manifest) RemainingL2Cycles(max int) int  { return max - m.Budget.L2CyclesTotal }
+
 func appendUnique(slice []int, val int) []int {
 	for _, v := range slice {
 		if v == val {

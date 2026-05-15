@@ -32,13 +32,15 @@ internal/
   advisor/           # escalation advisor (opt-in LLM consultation when stuck)
   feedback/          # event log miner, runtime/phase metrics, pattern detection
   annealing/         # self-annealing config patch generation, risk-gated suggestions
+  worker/            # conversational worker protocol: CLI-driven state machine, instruction generator, watcher
+  coordinator/       # coordinator instruction generator: CLAUDE.md for LLM orchestrator (dispatch map, sections)
   lock/              # advisory file lock registry
   brief/             # project brief loader
   events/            # NDJSON event emitter + tailer + query
   git/               # git snapshot + change detection
   tui/               # bubbletea monitor
 docs/
-  adr/               # architecture decision records (ADR 001-018)
+  adr/               # architecture decision records (ADR 001-020)
   TED.md             # technical engineering design
 ```
 

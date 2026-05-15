@@ -344,3 +344,245 @@ func TestContext(t *testing.T) {
 		t.Fatal("expected non-empty context")
 	}
 }
+
+func TestRetryIncrementsL1(t *testing.T) {
+	cfg := testConfig(t)
+	taskID := "test-retry"
+	dir := filepath.Join(cfg.TaskDir, taskID)
+	_ = os.MkdirAll(dir, 0o755)
+
+	ts := &TaskState{
+		TaskID:     taskID,
+		Phase:      8,
+		PhaseName:  "implementation",
+		Role:       "developer",
+		State:      StateFailed,
+		Complexity: "MEDIUM",
+		StartedAt:  time.Now(),
+	}
+	if err := saveTaskState(dir, ts); err != nil {
+		t.Fatal(err)
+	}
+
+	manifestData := []byte(`session_id: test-retry
+started_at: 2024-01-01T00:00:00Z
+updated_at: 2024-01-01T00:00:00Z
+status: running
+spec_path: test.yaml
+complexity: MEDIUM
+pipeline:
+  current_phase: 8
+  phases_completed: [1]
+  phases_skipped: []
+  l2_cycles: 0
+budget:
+  l1_retries_total: 0
+  l2_cycles_total: 0
+`)
+	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), manifestData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	retried, prompt, err := Retry(cfg, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.State != StateStarted {
+		t.Errorf("expected state=started after retry, got %s", retried.State)
+	}
+	if prompt == "" {
+		t.Error("expected non-empty prompt after retry")
+	}
+}
+
+func TestRetryRejectsNonFailed(t *testing.T) {
+	cfg := testConfig(t)
+	taskID := "test-retry-reject"
+	dir := filepath.Join(cfg.TaskDir, taskID)
+	_ = os.MkdirAll(dir, 0o755)
+
+	ts := &TaskState{
+		TaskID:    taskID,
+		Phase:     8,
+		PhaseName: "implementation",
+		Role:      "developer",
+		State:     StateWorking,
+		StartedAt: time.Now(),
+	}
+	if err := saveTaskState(dir, ts); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := Retry(cfg, taskID)
+	if err == nil {
+		t.Fatal("expected error when retrying non-failed task")
+	}
+}
+
+func TestLoopbackToPhase8(t *testing.T) {
+	cfg := testConfig(t)
+	taskID := "test-loopback"
+	dir := filepath.Join(cfg.TaskDir, taskID)
+	_ = os.MkdirAll(dir, 0o755)
+
+	ts := &TaskState{
+		TaskID:     taskID,
+		Phase:      9,
+		PhaseName:  "design_verification",
+		Role:       "reviewer",
+		State:      StateFailed,
+		Complexity: "MEDIUM",
+		StartedAt:  time.Now(),
+	}
+	if err := saveTaskState(dir, ts); err != nil {
+		t.Fatal(err)
+	}
+
+	manifestData := []byte(`session_id: test-loopback
+started_at: 2024-01-01T00:00:00Z
+updated_at: 2024-01-01T00:00:00Z
+status: running
+spec_path: test.yaml
+complexity: MEDIUM
+pipeline:
+  current_phase: 9
+  phases_completed: [1,8]
+  phases_skipped: []
+  l2_cycles: 0
+budget:
+  l1_retries_total: 0
+  l2_cycles_total: 0
+`)
+	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), manifestData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	looped, prompt, err := Loopback(cfg, taskID, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if looped.Phase != 8 {
+		t.Errorf("expected phase=8 after loopback, got %d", looped.Phase)
+	}
+	if looped.PhaseName != "implementation" {
+		t.Errorf("expected phase_name=implementation, got %s", looped.PhaseName)
+	}
+	if looped.Role != "developer" {
+		t.Errorf("expected role=developer, got %s", looped.Role)
+	}
+	if prompt == "" {
+		t.Error("expected non-empty prompt after loopback")
+	}
+}
+
+func TestLoopbackRejectsInvalidPhase(t *testing.T) {
+	cfg := testConfig(t)
+	taskID := "test-loopback-invalid"
+	dir := filepath.Join(cfg.TaskDir, taskID)
+	_ = os.MkdirAll(dir, 0o755)
+
+	ts := &TaskState{
+		TaskID:    taskID,
+		Phase:     9,
+		PhaseName: "design_verification",
+		Role:      "reviewer",
+		State:     StateFailed,
+		StartedAt: time.Now(),
+	}
+	if err := saveTaskState(dir, ts); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := Loopback(cfg, taskID, 5)
+	if err == nil {
+		t.Fatal("expected error when looping back to non-L2 phase")
+	}
+}
+
+func TestLoopbackRejectsNonVerificationPhase(t *testing.T) {
+	cfg := testConfig(t)
+	taskID := "test-loopback-nonverif"
+	dir := filepath.Join(cfg.TaskDir, taskID)
+	_ = os.MkdirAll(dir, 0o755)
+
+	ts := &TaskState{
+		TaskID:    taskID,
+		Phase:     7,
+		PhaseName: "architecture",
+		Role:      "lead",
+		State:     StateFailed,
+		StartedAt: time.Now(),
+	}
+	if err := saveTaskState(dir, ts); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := Loopback(cfg, taskID, 8)
+	if err == nil {
+		t.Fatal("expected error when looping back from non-verification phase")
+	}
+}
+
+func TestStatus(t *testing.T) {
+	cfg := testConfig(t)
+	taskID := "test-status"
+	dir := filepath.Join(cfg.TaskDir, taskID)
+	_ = os.MkdirAll(dir, 0o755)
+
+	ts := &TaskState{
+		TaskID:     taskID,
+		Phase:      8,
+		PhaseName:  "implementation",
+		Role:       "developer",
+		State:      StateWorking,
+		Complexity: "MEDIUM",
+		StartedAt:  time.Now(),
+	}
+	if err := saveTaskState(dir, ts); err != nil {
+		t.Fatal(err)
+	}
+
+	manifestData := []byte(`session_id: test-status
+started_at: 2024-01-01T00:00:00Z
+updated_at: 2024-01-01T00:00:00Z
+status: running
+spec_path: test.yaml
+complexity: MEDIUM
+pipeline:
+  current_phase: 8
+  phases_completed: [1]
+  phases_skipped: []
+  l2_cycles: 0
+budget:
+  l1_retries_total: 1
+  l2_cycles_total: 0
+`)
+	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), manifestData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := Status(cfg, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == "" {
+		t.Fatal("expected non-empty status output")
+	}
+	// Should show L1 retries used
+	if !contains(out, "1/2 used") {
+		t.Errorf("expected L1 retry count in output, got: %s", out)
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
+}
+
+func containsStr(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}

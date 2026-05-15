@@ -492,6 +492,144 @@ func Context(cfg *config.Config, taskID string) (string, error) {
 	return out, nil
 }
 
+// Retry resets current phase for another attempt. Increments L1 counter in manifest.
+func Retry(cfg *config.Config, taskID string) (*TaskState, string, error) {
+	dir := taskDir(cfg, taskID)
+	ts, err := loadTaskState(dir)
+	if err != nil {
+		return nil, "", fmt.Errorf("loading task state: %w", err)
+	}
+
+	if ts.State != StateFailed {
+		return nil, "", fmt.Errorf("cannot retry: task in state %s (expected failed)", ts.State)
+	}
+
+	manifestPath := filepath.Join(dir, "manifest.yaml")
+	manifest, err := session.Load(manifestPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("loading manifest: %w", err)
+	}
+
+	manifest.RecordL1Retry()
+	if err := manifest.Save(manifestPath); err != nil {
+		return nil, "", fmt.Errorf("saving manifest: %w", err)
+	}
+
+	// Clean up previous result
+	_ = os.Remove(filepath.Join(dir, "result.yaml"))
+
+	ts.State = StateStarted
+	ts.Reflections = nil
+	if err := saveTaskState(dir, ts); err != nil {
+		return nil, "", err
+	}
+
+	prompt := buildCurrentPhaseInfo(ts)
+
+	// Include scratchpad from previous attempts
+	scratchpad := phase.NewScratchpad(cfg.TaskDir, taskID)
+	if content := scratchpad.ForPrompt(); content != "" {
+		prompt += "\n" + content + "\n"
+	}
+
+	return ts, prompt, nil
+}
+
+// Loopback jumps back to a target phase (L2 cycle). Increments L2 counter in manifest.
+func Loopback(cfg *config.Config, taskID string, targetPhase int) (*TaskState, string, error) {
+	if targetPhase != phase.L2StartPhase {
+		return nil, "", fmt.Errorf("invalid loopback target: phase %d (only phase %d allowed)", targetPhase, phase.L2StartPhase)
+	}
+
+	dir := taskDir(cfg, taskID)
+	ts, err := loadTaskState(dir)
+	if err != nil {
+		return nil, "", fmt.Errorf("loading task state: %w", err)
+	}
+
+	if !phase.IsVerificationPhase(ts.Phase) {
+		return nil, "", fmt.Errorf("loopback only allowed from verification phases (current: phase %d %s)", ts.Phase, ts.PhaseName)
+	}
+
+	manifestPath := filepath.Join(dir, "manifest.yaml")
+	manifest, err := session.Load(manifestPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("loading manifest: %w", err)
+	}
+
+	manifest.RecordL2Cycle()
+	manifest.LoopBackTo(targetPhase)
+	if err := manifest.Save(manifestPath); err != nil {
+		return nil, "", fmt.Errorf("saving manifest: %w", err)
+	}
+
+	// Clean up previous result
+	_ = os.Remove(filepath.Join(dir, "result.yaml"))
+
+	// Find target phase info
+	phases := phase.DefaultPhases()
+	var targetPh phase.Phase
+	for _, p := range phases {
+		if p.ID == targetPhase {
+			targetPh = p
+			break
+		}
+	}
+
+	ts.Phase = targetPh.ID
+	ts.PhaseName = targetPh.Name
+	ts.Role = targetPh.Role
+	ts.State = StateStarted
+	ts.Reflections = nil
+	if err := saveTaskState(dir, ts); err != nil {
+		return nil, "", err
+	}
+
+	prompt := buildCurrentPhaseInfo(ts)
+	return ts, prompt, nil
+}
+
+// Status returns formatted summary of task state and budget.
+func Status(cfg *config.Config, taskID string) (string, error) {
+	dir := taskDir(cfg, taskID)
+	ts, err := loadTaskState(dir)
+	if err != nil {
+		return "", fmt.Errorf("loading task state: %w", err)
+	}
+
+	manifestPath := filepath.Join(dir, "manifest.yaml")
+	manifest, err := session.Load(manifestPath)
+	if err != nil {
+		return "", fmt.Errorf("loading manifest: %w", err)
+	}
+
+	maxL1 := cfg.PhaseMachine.MaxL1Retries
+	if maxL1 <= 0 {
+		maxL1 = 2
+	}
+	maxL2 := cfg.PhaseMachine.MaxL2Cycles
+	if maxL2 <= 0 {
+		maxL2 = 3
+	}
+
+	var out string
+	out += fmt.Sprintf("Task: %s\n", ts.TaskID)
+	out += fmt.Sprintf("Phase: %d (%s)\n", ts.Phase, ts.PhaseName)
+	out += fmt.Sprintf("Role: %s\n", ts.Role)
+	out += fmt.Sprintf("State: %s\n", ts.State)
+	out += fmt.Sprintf("Complexity: %s\n", ts.Complexity)
+	out += fmt.Sprintf("Pipeline: %s\n", manifest.Status)
+	out += fmt.Sprintf("\nBudget:\n")
+	out += fmt.Sprintf("  L1 retries: %d/%d used (%d remaining)\n",
+		manifest.Budget.L1RetriesTotal, maxL1, manifest.RemainingL1Retries(maxL1))
+	out += fmt.Sprintf("  L2 cycles:  %d/%d used (%d remaining)\n",
+		manifest.Budget.L2CyclesTotal, maxL2, manifest.RemainingL2Cycles(maxL2))
+	out += fmt.Sprintf("  Phases completed: %v\n", manifest.Pipeline.PhasesCompleted)
+	out += fmt.Sprintf("  Phases skipped: %v\n", manifest.Pipeline.PhasesSkipped)
+
+	return out, nil
+}
+
 // EmitEvent sends a worker event to the event log.
 func EmitEvent(cfg *config.Config, taskID, eventType string, data map[string]interface{}) {
 	emitter, err := events.NewEmitter(cfg.EventLog)

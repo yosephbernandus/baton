@@ -29,6 +29,9 @@ func NewWorkerCmd() *cobra.Command {
 	cmd.AddCommand(newWorkerObserveCmd())
 	cmd.AddCommand(newWorkerContextCmd())
 	cmd.AddCommand(newWorkerWatchCmd())
+	cmd.AddCommand(newWorkerRetryCmd())
+	cmd.AddCommand(newWorkerLoopbackCmd())
+	cmd.AddCommand(newWorkerStatusCmd())
 	return cmd
 }
 
@@ -414,6 +417,98 @@ func resolveTaskID(cfg *config.Config) string {
 		}
 	}
 	return ""
+}
+
+func newWorkerRetryCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:           "retry <task-id>",
+		Short:         "Retry current phase (L1 retry)",
+		Args:          cobra.ExactArgs(1),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadConfig()
+			if err != nil {
+				return fmt.Errorf("config error: %v", err)
+			}
+
+			ts, prompt, err := worker.Retry(cfg, args[0])
+			if err != nil {
+				return err
+			}
+
+			worker.EmitEvent(cfg, ts.TaskID, "phase_retry_by_worker", map[string]interface{}{
+				"phase": ts.Phase, "phase_name": ts.PhaseName,
+			})
+
+			fmt.Print(prompt)
+			return nil
+		},
+	}
+}
+
+func newWorkerLoopbackCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:           "loopback <task-id> <phase-id>",
+		Short:         "Loop back to implementation phase (L2 cycle)",
+		Args:          cobra.ExactArgs(2),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadConfig()
+			if err != nil {
+				return fmt.Errorf("config error: %v", err)
+			}
+
+			targetPhase, err := strconv.Atoi(args[1])
+			if err != nil {
+				return fmt.Errorf("invalid phase ID: %v", err)
+			}
+
+			ts, prompt, err := worker.Loopback(cfg, args[0], targetPhase)
+			if err != nil {
+				return err
+			}
+
+			worker.EmitEvent(cfg, ts.TaskID, "l2_loopback_by_worker", map[string]interface{}{
+				"phase": ts.Phase, "phase_name": ts.PhaseName, "target": targetPhase,
+			})
+
+			fmt.Print(prompt)
+			return nil
+		},
+	}
+}
+
+func newWorkerStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:           "status [task-id]",
+		Short:         "Show task state and budget summary",
+		Args:          cobra.MaximumNArgs(1),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadConfig()
+			if err != nil {
+				return fmt.Errorf("config error: %v", err)
+			}
+
+			taskID := resolveTaskID(cfg)
+			if len(args) > 0 {
+				taskID = args[0]
+			}
+			if taskID == "" {
+				return fmt.Errorf("no active task found")
+			}
+
+			out, err := worker.Status(cfg, taskID)
+			if err != nil {
+				return err
+			}
+			fmt.Print(out)
+			return nil
+		},
+	}
 }
 
 func joinArgs(args []string) string {
