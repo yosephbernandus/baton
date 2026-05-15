@@ -232,40 +232,39 @@ Pre-built binaries for Linux and macOS (amd64/arm64) are available on the [Relea
 
 ## Quick Start
 
-1. Create config:
-
 ```bash
-mkdir -p .baton
-cp agents.examples.yaml .baton/agents.yaml
-# Edit to match your installed runtimes
-```
+# 1. Scaffold — auto-detects your installed runtimes
+baton setup
 
-2. Create a task spec:
+# 2. Edit the generated files
+vim .baton/project-brief.md    # Add your project details
+vim .baton/agents.yaml         # Verify models
 
-```yaml
-# .baton/specs/my-task.yaml
-spec:
-  what: "Add input validation to the login handler"
-  why: "Users can submit empty credentials, bypassing rate limiting"
-  constraints:
-    - "Do not modify the auth middleware"
-  context_files:
-    - handlers/login.go
-  acceptance_criteria:
-    - "Empty email returns 400"
-    - "Empty password returns 400"
-```
+# 3. Write your first task spec
+cp .baton/specs/example-task.yaml .baton/specs/my-task.yaml
+vim .baton/specs/my-task.yaml  # Fill in what/why/constraints
 
-3. Run it:
+# 4. Run with coordinator flow (Claude Code orchestrates)
+baton init .baton/specs/my-task.yaml
+cp .baton/tasks/<task-id>/CLAUDE.md CLAUDE.md
+# Start Claude Code — it reads CLAUDE.md and orchestrates
 
-```bash
+# Or run directly (single-shot dispatch)
 baton run --runtime opencode --model kimi --spec .baton/specs/my-task.yaml
 ```
+
+`baton setup` creates:
+- `.baton/agents.yaml` — runtime config with detected agents
+- `.baton/project-brief.md` — project context template
+- `.baton/specs/example-task.yaml` — sample task spec
+- `.gitignore` entries for runtime data
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
+| `baton setup` | Scaffold `.baton/` with auto-detected runtimes |
+| `baton init <spec>` | Initialize task and generate coordinator instructions |
 | `baton run` | Spawn a task in an external runtime |
 | `baton status` | List tasks and their statuses |
 | `baton list` | List configured runtimes and availability |

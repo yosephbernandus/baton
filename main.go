@@ -39,6 +39,7 @@ func main() {
 		cmd.NewAnnealCmd(),
 		cmd.NewWorkerCmd(),
 		cmd.NewInitCmd(),
+		cmd.NewSetupCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
