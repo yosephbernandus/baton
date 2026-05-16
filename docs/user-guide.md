@@ -1,5 +1,7 @@
 # User Guide: From Brainstorm to Baton Task
 
+> **New to baton?** Start with [README.md](../README.md) for setup. This guide covers the workflow after setup.
+
 This guide shows how to use Baton effectively in your daily workflow. It teaches you how to go from raw LLM discussion to a well-structured task spec that produces predictable results.
 
 ## The Problem Baton Solves

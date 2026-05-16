@@ -101,18 +101,18 @@ Phase 8: skill routing, escalation advisor, session manifest, self-annealing.
 
 ## Integrating Baton Into a Project
 
-If user asks to integrate baton into their project, read `INTEGRATION.md` — it has the complete step-by-step guide: runtime config, project brief, task specs, orchestration patterns, feedback loop commands, and troubleshooting.
+If user asks to integrate baton into their project: run `baton setup` to scaffold, then read `docs/reference.md` for config details and troubleshooting.
 
 ## Reference Docs
 
-- `INTEGRATION.md` — step-by-step guide for integrating baton into any project (includes pipeline mode)
+- `docs/reference.md` — config reference, LLM integration guide, troubleshooting
 - `ARCHITECTURE.md` — full system design (source of truth)
 - `llms.txt` — LLM-friendly project overview
 - `orchestrator-prompt.md` — system prompt template for LLMs using baton as orchestrator
 - `docs/conversational-worker-protocol.md` — IPC protocol details (stdout markers + socket + inbox)
 - `docs/TED.md` — technical engineering design with Go struct definitions
 - `docs/user-guide.md` — workflow guide from brainstorm to task spec
-- `docs/adr/` — 18 architecture decision records
+- `docs/adr/` — 20 architecture decision records
 - `agents.examples.yaml` — example config
 - `Task.spec.example.yaml` — example task spec
 - `Project.brief.example.md` — example project brief

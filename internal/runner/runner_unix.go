@@ -13,7 +13,7 @@ import (
 )
 
 func (r *Runner) buildCommand(_ context.Context, rt *config.RuntimeConfig, model, prompt string, s *spec.Spec, extraArgs ...string) *exec.Cmd {
-	args := buildArgs(rt, model, prompt, s)
+	args := BuildArgs(rt, model, prompt, s)
 	args = append(args, extraArgs...)
 	cmd := exec.Command(rt.Command, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

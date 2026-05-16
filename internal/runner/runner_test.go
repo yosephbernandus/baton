@@ -83,7 +83,7 @@ func TestBuildArgsStdinModeSkipsPrompt(t *testing.T) {
 		PromptMode: "stdin",
 		ExtraFlags: []string{"--dangerously-skip-permissions"},
 	}
-	args := buildArgs(rt, "sonnet", "do something", nil)
+	args := BuildArgs(rt, "sonnet", "do something", nil)
 	for _, a := range args {
 		if a == "do something" {
 			t.Fatal("prompt should not appear in args with stdin mode")
@@ -104,7 +104,7 @@ func TestBuildArgsStdinModeSkipsPositionalPrompt(t *testing.T) {
 		Positional: []string{"run", "{{prompt}}"},
 		PromptMode: "stdin",
 	}
-	args := buildArgs(rt, "gpt-4", "my prompt", nil)
+	args := BuildArgs(rt, "gpt-4", "my prompt", nil)
 	if len(args) != 3 {
 		t.Fatalf("expected 3 args (run, --model, gpt-4), got %d: %v", len(args), args)
 	}
@@ -123,7 +123,7 @@ func TestBuildArgsNormalModeIncludesPrompt(t *testing.T) {
 		Command:    "claude",
 		PromptFlag: "-p",
 	}
-	args := buildArgs(rt, "", "do something", nil)
+	args := BuildArgs(rt, "", "do something", nil)
 	found := false
 	for _, a := range args {
 		if a == "do something" {

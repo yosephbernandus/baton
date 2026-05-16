@@ -292,7 +292,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 }
 
 
-func buildArgs(rt *config.RuntimeConfig, model, prompt string, s *spec.Spec) []string {
+func BuildArgs(rt *config.RuntimeConfig, model, prompt string, s *spec.Spec) []string {
 	var args []string
 	stdinMode := rt.PromptMode == "stdin"
 

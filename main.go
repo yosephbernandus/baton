@@ -40,6 +40,8 @@ func main() {
 		cmd.NewWorkerCmd(),
 		cmd.NewInitCmd(),
 		cmd.NewSetupCmd(),
+		cmd.NewDoctorCmd(),
+		cmd.NewPlanCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
