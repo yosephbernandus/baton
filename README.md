@@ -106,7 +106,7 @@ rm -rf .baton/tasks/      # Clear task state
 | [docs/conversational-worker-protocol.md](docs/conversational-worker-protocol.md) | IPC protocol details |
 | [agents.examples.yaml](agents.examples.yaml) | Full config example |
 | [Task.spec.example.yaml](Task.spec.example.yaml) | Full spec example |
-| [docs/adr/](docs/adr/) | Architecture decision records (001-020) |
+| docs/adr/ | Architecture decision records (local only) |
 
 ## License
 

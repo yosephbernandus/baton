@@ -112,7 +112,7 @@ If user asks to integrate baton into their project: run `baton setup` to scaffol
 - `docs/conversational-worker-protocol.md` — IPC protocol details (stdout markers + socket + inbox)
 - `docs/TED.md` — technical engineering design with Go struct definitions
 - `docs/user-guide.md` — workflow guide from brainstorm to task spec
-- `docs/adr/` — 20 architecture decision records
+- `docs/adr/` — architecture decision records (local only, not in git)
 - `agents.examples.yaml` — example config
 - `Task.spec.example.yaml` — example task spec
 - `Project.brief.example.md` — example project brief

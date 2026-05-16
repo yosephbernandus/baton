@@ -11,3 +11,9 @@ baton
 !.baton/agents.yaml
 !.baton/project-brief.md
 !.baton/specs/
+
+# Dev-specific
+.claude/
+
+# ADR docs (local only)
+docs/adr/
