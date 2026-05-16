@@ -12,6 +12,9 @@
 orchestrator:
   runtime: claude-code
   model: sonnet
+  # instructions_file: ""  # Auto-detected from runtime:
+  # claude-code → CLAUDE.md | cursor → .cursorrules
+  # windsurf → .windsurfrules | cline → .clinerules | default → AGENTS.md
 
 # Runtime definitions
 runtimes:

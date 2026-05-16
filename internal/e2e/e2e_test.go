@@ -160,10 +160,10 @@ func TestInitGeneratesValidCLAUDE_MD(t *testing.T) {
 		t.Fatalf("init failed (exit %d): %s", code, out)
 	}
 
-	claudePath := filepath.Join(dir, ".baton", "tasks", "test-task", "CLAUDE.md")
-	data, err := os.ReadFile(claudePath)
+	instrPath := filepath.Join(dir, ".baton", "tasks", "test-task", "AGENTS.md")
+	data, err := os.ReadFile(instrPath)
 	if err != nil {
-		t.Fatalf("CLAUDE.md not found: %v", err)
+		t.Fatalf("instructions file not found: %v", err)
 	}
 
 	content := string(data)
@@ -182,7 +182,7 @@ func TestInitGeneratesValidCLAUDE_MD(t *testing.T) {
 	}
 	for _, s := range sections {
 		if !strings.Contains(content, s) {
-			t.Errorf("CLAUDE.md missing section: %s", s)
+			t.Errorf("instructions file missing section: %s", s)
 		}
 	}
 }

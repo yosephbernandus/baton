@@ -62,3 +62,36 @@ func TestResolveRuntime(t *testing.T) {
 		t.Errorf("expected aider/gpt-4o, got %s/%s", r, m)
 	}
 }
+
+func TestInstructionsFilename(t *testing.T) {
+	tests := []struct {
+		name     string
+		runtime  string
+		explicit string
+		want     string
+	}{
+		{"claude-code auto", "claude-code", "", "CLAUDE.md"},
+		{"cursor auto", "cursor", "", ".cursorrules"},
+		{"windsurf auto", "windsurf", "", ".windsurfrules"},
+		{"cline auto", "cline", "", ".clinerules"},
+		{"unknown runtime", "something", "", "AGENTS.md"},
+		{"empty runtime", "", "", "AGENTS.md"},
+		{"explicit override", "claude-code", "CUSTOM.md", "CUSTOM.md"},
+		{"explicit beats auto", "cursor", "AGENTS.md", "AGENTS.md"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				Orchestrator: OrchestratorConfig{
+					Runtime:          tt.runtime,
+					InstructionsFile: tt.explicit,
+				},
+			}
+			got := cfg.InstructionsFilename()
+			if got != tt.want {
+				t.Errorf("InstructionsFilename() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

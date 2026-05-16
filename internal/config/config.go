@@ -50,8 +50,9 @@ type SkillsConfig struct {
 }
 
 type OrchestratorConfig struct {
-	Runtime string `yaml:"runtime"`
-	Model   string `yaml:"model"`
+	Runtime          string `yaml:"runtime"`
+	Model            string `yaml:"model"`
+	InstructionsFile string `yaml:"instructions_file"`
 }
 
 type RuntimeConfig struct {
@@ -181,6 +182,24 @@ func (c *Config) ResolveRuntime(name, model string) (string, string) {
 		model = c.Defaults.Model
 	}
 	return name, model
+}
+
+func (c *Config) InstructionsFilename() string {
+	if c.Orchestrator.InstructionsFile != "" {
+		return c.Orchestrator.InstructionsFile
+	}
+	switch c.Orchestrator.Runtime {
+	case "claude-code":
+		return "CLAUDE.md"
+	case "cursor":
+		return ".cursorrules"
+	case "windsurf":
+		return ".windsurfrules"
+	case "cline":
+		return ".clinerules"
+	default:
+		return "AGENTS.md"
+	}
 }
 
 func defaultConfig() *Config {

@@ -22,8 +22,8 @@ type DispatchTarget struct {
 	Model   string
 }
 
-// GenerateCoordinatorInstructions produces a complete CLAUDE.md-style document
-// that teaches an LLM coordinator to execute the full baton pipeline.
+// GenerateCoordinatorInstructions produces coordinator instructions
+// that teach an LLM to execute the full baton pipeline.
 func GenerateCoordinatorInstructions(cfg CoordinatorConfig) string {
 	if cfg.BatonBin == "" {
 		cfg.BatonBin = "baton"

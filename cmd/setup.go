@@ -122,8 +122,11 @@ func runSetup(force bool) error {
 	fmt.Println()
 	fmt.Println("Or use the coordinator flow:")
 	fmt.Println("  baton init .baton/specs/my-task.yaml --complexity MEDIUM")
-	fmt.Println("  cp .baton/tasks/<task-id>/CLAUDE.md CLAUDE.md")
-	fmt.Println("  # Start Claude Code — it reads CLAUDE.md and orchestrates")
+	fmt.Println("  cp .baton/tasks/<task-id>/<instructions> <instructions>")
+	fmt.Println("  # Start your coordinator agent — it reads the instructions and orchestrates")
+	fmt.Println()
+	fmt.Println("Instructions file auto-detected from orchestrator.runtime in agents.yaml:")
+	fmt.Println("  claude-code → CLAUDE.md | cursor → .cursorrules | windsurf → .windsurfrules | default → AGENTS.md")
 
 	return nil
 }

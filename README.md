@@ -35,9 +35,10 @@ vim .baton/specs/add-jwt-authentication-to-the-api.yaml
 # 5. Initialize the coordinator
 baton init .baton/specs/add-jwt-authentication-to-the-api.yaml
 
-# 6. Copy instructions and start Claude Code
+# 6. Copy instructions and start your coordinator agent
 cp .baton/tasks/add-jwt-authentication-to-the-api/CLAUDE.md CLAUDE.md
-# Claude Code reads CLAUDE.md → plans → dispatches to OpenCode → reviews → done
+# Coordinator reads instructions → plans → dispatches to workers → reviews → done
+# Instructions filename auto-detected: claude-code→CLAUDE.md, cursor→.cursorrules, default→AGENTS.md
 ```
 
 Or dispatch directly (single-shot, no coordinator):
@@ -73,7 +74,7 @@ You (Human) <-> Claude Code (Opus) <-> OpenCode (Worker)
 |---------|-------------|
 | `baton setup` | Scaffold `.baton/` with auto-detected runtimes |
 | `baton plan <description>` | Generate task spec from description |
-| `baton init <spec>` | Initialize task and generate coordinator CLAUDE.md |
+| `baton init <spec>` | Initialize task and generate coordinator instructions |
 | `baton doctor` | Verify runtime configs work (`--probe` to test live) |
 | `baton run` | Dispatch a task to an external runtime |
 | `baton status` | List tasks and statuses |

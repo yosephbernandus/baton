@@ -18,6 +18,7 @@ func NewInitCmd() *cobra.Command {
 	var (
 		complexity string
 		mode       string
+		output     string
 	)
 
 	cmd := &cobra.Command{
@@ -61,7 +62,7 @@ func NewInitCmd() *cobra.Command {
 
 			switch mode {
 			case "coordinator":
-				return initCoordinator(cfg, s, specPath, complexity)
+				return initCoordinator(cfg, s, specPath, complexity, output)
 			case "worker":
 				return initWorker(cfg, specPath, complexity)
 			case "headless":
@@ -75,10 +76,11 @@ func NewInitCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&complexity, "complexity", "", "Override complexity (TRIVIAL, SMALL, MEDIUM, LARGE)")
 	cmd.Flags().StringVar(&mode, "mode", "coordinator", "Execution mode: coordinator, worker, or headless")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "Override instructions filename (default: auto-detect from orchestrator runtime)")
 	return cmd
 }
 
-func initCoordinator(cfg *config.Config, s *spec.Spec, specPath, complexity string) error {
+func initCoordinator(cfg *config.Config, s *spec.Spec, specPath, complexity, output string) error {
 	specBase := filepath.Base(specPath)
 	ext := filepath.Ext(specBase)
 	taskID := specBase[:len(specBase)-len(ext)]
@@ -134,7 +136,11 @@ worker_pid: %d
 	}
 	instructions := coordinator.GenerateCoordinatorInstructions(ccfg)
 
-	instrPath := filepath.Join(taskDir, "CLAUDE.md")
+	instrFile := cfg.InstructionsFilename()
+	if output != "" {
+		instrFile = output
+	}
+	instrPath := filepath.Join(taskDir, instrFile)
 	if err := os.WriteFile(instrPath, []byte(instructions), 0o644); err != nil {
 		return exitError(1, "writing instructions: %v", err)
 	}
@@ -144,9 +150,9 @@ worker_pid: %d
 	fmt.Printf("Complexity: %s (%d active phases)\n", complexity, len(active))
 	fmt.Printf("Instructions: %s\n", instrPath)
 	fmt.Printf("\nNext steps:\n")
-	fmt.Printf("  1. Copy instructions to project root: cp %s CLAUDE.md\n", instrPath)
-	fmt.Printf("  2. Start Claude Code in the project directory\n")
-	fmt.Printf("  3. Claude Code reads CLAUDE.md and follows the coordinator protocol\n")
+	fmt.Printf("  1. Copy instructions to project root: cp %s %s\n", instrPath, instrFile)
+	fmt.Printf("  2. Start your coordinator agent in the project directory\n")
+	fmt.Printf("  3. The agent reads %s and follows the coordinator protocol\n", instrFile)
 
 	return nil
 }
