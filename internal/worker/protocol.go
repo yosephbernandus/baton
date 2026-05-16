@@ -619,7 +619,7 @@ func Status(cfg *config.Config, taskID string) (string, error) {
 	out += fmt.Sprintf("State: %s\n", ts.State)
 	out += fmt.Sprintf("Complexity: %s\n", ts.Complexity)
 	out += fmt.Sprintf("Pipeline: %s\n", manifest.Status)
-	out += fmt.Sprintf("\nBudget:\n")
+	out += "\nBudget:\n"
 	out += fmt.Sprintf("  L1 retries: %d/%d used (%d remaining)\n",
 		manifest.Budget.L1RetriesTotal, maxL1, manifest.RemainingL1Retries(maxL1))
 	out += fmt.Sprintf("  L2 cycles:  %d/%d used (%d remaining)\n",
