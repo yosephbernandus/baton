@@ -73,21 +73,6 @@ func TestValidComplexity(t *testing.T) {
 	}
 }
 
-func TestIsL2Phase(t *testing.T) {
-	l2 := []int{8, 9, 10, 11, 12, 13, 14, 15}
-	notL2 := []int{1, 2, 3, 4, 5, 6, 7, 16}
-	for _, id := range l2 {
-		if !IsL2Phase(id) {
-			t.Errorf("phase %d should be L2", id)
-		}
-	}
-	for _, id := range notL2 {
-		if IsL2Phase(id) {
-			t.Errorf("phase %d should not be L2", id)
-		}
-	}
-}
-
 func TestIsVerificationPhase(t *testing.T) {
 	verify := []int{9, 10, 11, 13, 14, 15}
 	notVerify := []int{1, 2, 3, 4, 5, 6, 7, 8, 12, 16}

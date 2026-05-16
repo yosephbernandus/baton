@@ -10,23 +10,23 @@ import (
 )
 
 type Config struct {
-	Orchestrator    OrchestratorConfig       `yaml:"orchestrator"`
-	Runtimes        map[string]RuntimeConfig `yaml:"runtimes"`
-	Defaults        DefaultsConfig           `yaml:"defaults"`
-	Routing         RoutingConfig            `yaml:"routing"`
-	ClarifyPatterns []string                 `yaml:"clarification_patterns"`
-	ClarifyExit     int                      `yaml:"clarification_exit_code"`
-	EventLog        string                   `yaml:"event_log"`
-	TaskDir         string                   `yaml:"task_dir"`
-	ResultDir       string                   `yaml:"result_dir"`
-	SpecDir         string                   `yaml:"spec_dir"`
-	LockFile        string                   `yaml:"lock_file"`
-	ProjectBrief    string                   `yaml:"project_brief"`
-	AbsoluteTimeout string                   `yaml:"default_timeout"` // yaml tag kept as default_timeout for backward compat
-	SilenceTimeout  string                   `yaml:"silence_timeout"`
-	SilenceWarning  string                   `yaml:"silence_warning"`
-	OutputTailLines int                      `yaml:"output_tail_lines"`
-	PhaseMachine    PhaseMachineConfig       `yaml:"phase_machine"`
+	Orchestrator    OrchestratorConfig         `yaml:"orchestrator"`
+	Runtimes        map[string]RuntimeConfig   `yaml:"runtimes"`
+	Defaults        DefaultsConfig             `yaml:"defaults"`
+	Routing         RoutingConfig              `yaml:"routing"`
+	ClarifyPatterns []string                   `yaml:"clarification_patterns"`
+	ClarifyExit     int                        `yaml:"clarification_exit_code"`
+	EventLog        string                     `yaml:"event_log"`
+	TaskDir         string                     `yaml:"task_dir"`
+	ResultDir       string                     `yaml:"result_dir"`
+	SpecDir         string                     `yaml:"spec_dir"`
+	LockFile        string                     `yaml:"lock_file"`
+	ProjectBrief    string                     `yaml:"project_brief"`
+	AbsoluteTimeout string                     `yaml:"default_timeout"` // yaml tag kept as default_timeout for backward compat
+	SilenceTimeout  string                     `yaml:"silence_timeout"`
+	SilenceWarning  string                     `yaml:"silence_warning"`
+	OutputTailLines int                        `yaml:"output_tail_lines"`
+	PhaseMachine    PhaseMachineConfig         `yaml:"phase_machine"`
 	RoleModels      map[string]RoleModelConfig `yaml:"role_models"`
 	Skills          SkillsConfig               `yaml:"skills"`
 	Advisor         AdvisorConfig              `yaml:"escalation_advisor"`
@@ -55,15 +55,15 @@ type OrchestratorConfig struct {
 }
 
 type RuntimeConfig struct {
-	Command         string            `yaml:"command"`
-	ModelFlag       string            `yaml:"model_flag"`
-	PromptFlag      string            `yaml:"prompt_flag"`
-	ContextFlag     string            `yaml:"context_flag"`
-	ExtraFlags      []string          `yaml:"extra_flags"`
-	Positional      []string          `yaml:"positional"`
-	Models          []string          `yaml:"models"`
-	ToolRestriction *ToolRestriction  `yaml:"tool_restriction,omitempty"`
-	PromptMode      string            `yaml:"prompt_mode,omitempty"` // "stdin" to pipe prompt via stdin instead of CLI arg
+	Command         string           `yaml:"command"`
+	ModelFlag       string           `yaml:"model_flag"`
+	PromptFlag      string           `yaml:"prompt_flag"`
+	ContextFlag     string           `yaml:"context_flag"`
+	ExtraFlags      []string         `yaml:"extra_flags"`
+	Positional      []string         `yaml:"positional"`
+	Models          []string         `yaml:"models"`
+	ToolRestriction *ToolRestriction `yaml:"tool_restriction,omitempty"`
+	PromptMode      string           `yaml:"prompt_mode,omitempty"` // "stdin" to pipe prompt via stdin instead of CLI arg
 }
 
 type ToolRestriction struct {
@@ -101,11 +101,11 @@ type FeedbackConfig struct {
 }
 
 type AnnealingConfig struct {
-	Enabled         bool   `yaml:"enabled"`
-	AutoApply       bool   `yaml:"auto_apply"`
+	Enabled          bool   `yaml:"enabled"`
+	AutoApply        bool   `yaml:"auto_apply"`
 	AutoApplyMaxRisk string `yaml:"auto_apply_max_risk"`
-	MinConfidence   string `yaml:"min_confidence"`
-	PatchDir        string `yaml:"patch_dir"`
+	MinConfidence    string `yaml:"min_confidence"`
+	PatchDir         string `yaml:"patch_dir"`
 }
 
 type WorkerProtocolConfig struct {
@@ -143,14 +143,6 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("loading project config: %w", err)
 	}
 
-	return cfg, nil
-}
-
-func LoadConfigFromPath(path string) (*Config, error) {
-	cfg := defaultConfig()
-	if err := mergeFromFile(cfg, path); err != nil {
-		return nil, err
-	}
 	return cfg, nil
 }
 
@@ -201,12 +193,12 @@ func defaultConfig() *Config {
 			"multiple possible",
 			"CLARIFICATION_NEEDED",
 		},
-		ClarifyExit:    10,
-		EventLog:       ".baton/events.ndjson",
-		TaskDir:        ".baton/tasks",
-		ResultDir:      ".baton/results",
-		SpecDir:        ".baton/specs",
-		LockFile:       ".baton/locks.yaml",
+		ClarifyExit:     10,
+		EventLog:        ".baton/events.ndjson",
+		TaskDir:         ".baton/tasks",
+		ResultDir:       ".baton/results",
+		SpecDir:         ".baton/specs",
+		LockFile:        ".baton/locks.yaml",
 		ProjectBrief:    ".baton/project-brief.md",
 		AbsoluteTimeout: "60m",
 		SilenceTimeout:  "5m",

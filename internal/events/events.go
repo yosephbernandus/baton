@@ -34,14 +34,6 @@ func NewEmitter(path string) (*Emitter, error) {
 	return &Emitter{path: path, maxSizeBytes: 10 * 1024 * 1024, keepCount: 3}, nil
 }
 
-func NewEmitterWithRotation(path string, maxSizeMB, keepCount int) (*Emitter, error) {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("creating event log directory: %w", err)
-	}
-	return &Emitter{path: path, maxSizeBytes: int64(maxSizeMB) * 1024 * 1024, keepCount: keepCount}, nil
-}
-
 func (e *Emitter) Emit(ev Event) error {
 	if ev.Timestamp.IsZero() {
 		ev.Timestamp = time.Now().UTC()

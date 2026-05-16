@@ -1,8 +1,6 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -23,53 +21,6 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if len(cfg.ClarifyPatterns) == 0 {
 		t.Error("expected default clarification patterns")
-	}
-}
-
-func TestLoadConfigFromPath(t *testing.T) {
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "agents.yaml")
-
-	content := []byte(`
-orchestrator:
-  runtime: claude-code
-  model: sonnet
-runtimes:
-  opencode:
-    command: "opencode"
-    model_flag: "-m"
-    prompt_flag: "-p"
-    models:
-      - kimi
-      - deepseek
-defaults:
-  runtime: opencode
-  model: kimi
-`)
-	if err := os.WriteFile(cfgPath, content, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := LoadConfigFromPath(cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if cfg.Orchestrator.Runtime != "claude-code" {
-		t.Errorf("expected orchestrator runtime claude-code, got %s", cfg.Orchestrator.Runtime)
-	}
-	if cfg.Orchestrator.Model != "sonnet" {
-		t.Errorf("expected orchestrator model sonnet, got %s", cfg.Orchestrator.Model)
-	}
-	if len(cfg.Runtimes) != 1 {
-		t.Errorf("expected 1 runtime, got %d", len(cfg.Runtimes))
-	}
-	rt := cfg.Runtimes["opencode"]
-	if rt.Command != "opencode" {
-		t.Errorf("expected command opencode, got %s", rt.Command)
-	}
-	if len(rt.Models) != 2 {
-		t.Errorf("expected 2 models, got %d", len(rt.Models))
 	}
 }
 

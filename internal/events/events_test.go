@@ -93,30 +93,3 @@ func TestTaskEvent(t *testing.T) {
 	}
 }
 
-func TestEmitter_Rotation(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "events.ndjson")
-
-	emitter, err := NewEmitterWithRotation(logPath, 1, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	emitter.maxSizeBytes = 100
-
-	bigData := make(map[string]interface{})
-	bigData["payload"] = strings.Repeat("x", 512)
-
-	for i := 0; i < 5; i++ {
-		_ = emitter.Emit(Event{TaskID: "t1", EventType: "output", Data: bigData})
-	}
-
-	if _, err := os.Stat(logPath + ".1"); os.IsNotExist(err) {
-		t.Error("rotated .1 file should exist")
-	}
-	if _, err := os.Stat(logPath + ".2"); os.IsNotExist(err) {
-		t.Error("rotated .2 file should exist")
-	}
-	if _, err := os.Stat(logPath + ".3"); !os.IsNotExist(err) {
-		t.Error(".3 file should not exist with keepCount=2")
-	}
-}
