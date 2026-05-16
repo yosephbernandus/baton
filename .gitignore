@@ -14,6 +14,7 @@ baton
 
 # Dev-specific
 .claude/
+CLAUDE.md
 
 # ADR docs (local only)
 docs/adr/
