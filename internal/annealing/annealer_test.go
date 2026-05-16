@@ -117,8 +117,8 @@ func TestAutoApplyEligible(t *testing.T) {
 		{ID: "p1", Risk: "low", TargetPath: "routing.rules"},
 		{ID: "p2", Risk: "medium", TargetPath: "role_models"},
 		{ID: "p3", Risk: "low", TargetPath: "default_timeout"},
-		{ID: "p4", Risk: "low", TargetPath: "phase_machine.enabled"}, // safety: blocked
-		{ID: "p5", Risk: "low", TargetPath: "escalation_advisor.enabled"}, // safety: blocked
+		{ID: "p4", Risk: "low", TargetPath: "phase_machine.enabled"},        // safety: blocked
+		{ID: "p5", Risk: "low", TargetPath: "escalation_advisor.enabled"},   // safety: blocked
 		{ID: "p6", Risk: "low", TargetPath: "routing.rules", Applied: true}, // already applied
 	}
 

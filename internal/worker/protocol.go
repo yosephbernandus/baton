@@ -48,9 +48,9 @@ type StuckSignal struct {
 }
 
 type GuidanceResponse struct {
-	Answer    string    `yaml:"answer"`
-	From      string    `yaml:"from"`
-	SentAt    time.Time `yaml:"sent_at"`
+	Answer string    `yaml:"answer"`
+	From   string    `yaml:"from"`
+	SentAt time.Time `yaml:"sent_at"`
 }
 
 type ResultSignal struct {
@@ -62,12 +62,12 @@ type ResultSignal struct {
 }
 
 type ProgressEntry struct {
-	Type    string `json:"type"`
-	Time    string `json:"ts"`
-	Msg     string `json:"msg"`
-	Pct     int    `json:"pct,omitempty"`
-	TaskID  string `json:"task_id"`
-	Phase   int    `json:"phase,omitempty"`
+	Type   string `json:"type"`
+	Time   string `json:"ts"`
+	Msg    string `json:"msg"`
+	Pct    int    `json:"pct,omitempty"`
+	TaskID string `json:"task_id"`
+	Phase  int    `json:"phase,omitempty"`
 }
 
 func taskDir(cfg *config.Config, taskID string) string {

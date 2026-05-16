@@ -11,26 +11,26 @@ import (
 )
 
 type Task struct {
-	ID           string      `yaml:"id"`
-	Runtime      string      `yaml:"runtime"`
-	Model        string      `yaml:"model"`
-	Status       string      `yaml:"status"`
-	DispatchedBy string      `yaml:"dispatched_by"`
-	Spec         *spec.Spec  `yaml:"spec,omitempty"`
-	Escalation   Escalation  `yaml:"escalation"`
-	Attempts     []Attempt   `yaml:"attempts"`
-	CreatedAt    time.Time   `yaml:"created_at"`
-	StartedAt    *time.Time  `yaml:"started_at,omitempty"`
-	CompletedAt  *time.Time  `yaml:"completed_at,omitempty"`
-	Duration     string      `yaml:"duration,omitempty"`
-	LastActivity *time.Time  `yaml:"last_activity,omitempty"`
-	PID          int         `yaml:"pid,omitempty"`
-	ExitCode     *int        `yaml:"exit_code,omitempty"`
-	FilesChanged []string    `yaml:"files_changed,omitempty"`
-	OutputTail   []string    `yaml:"output_tail,omitempty"`
-	Response     *Response   `yaml:"response,omitempty"`
-	SocketPath   string      `yaml:"socket_path,omitempty"`
-	Error        string      `yaml:"error,omitempty"`
+	ID           string     `yaml:"id"`
+	Runtime      string     `yaml:"runtime"`
+	Model        string     `yaml:"model"`
+	Status       string     `yaml:"status"`
+	DispatchedBy string     `yaml:"dispatched_by"`
+	Spec         *spec.Spec `yaml:"spec,omitempty"`
+	Escalation   Escalation `yaml:"escalation"`
+	Attempts     []Attempt  `yaml:"attempts"`
+	CreatedAt    time.Time  `yaml:"created_at"`
+	StartedAt    *time.Time `yaml:"started_at,omitempty"`
+	CompletedAt  *time.Time `yaml:"completed_at,omitempty"`
+	Duration     string     `yaml:"duration,omitempty"`
+	LastActivity *time.Time `yaml:"last_activity,omitempty"`
+	PID          int        `yaml:"pid,omitempty"`
+	ExitCode     *int       `yaml:"exit_code,omitempty"`
+	FilesChanged []string   `yaml:"files_changed,omitempty"`
+	OutputTail   []string   `yaml:"output_tail,omitempty"`
+	Response     *Response  `yaml:"response,omitempty"`
+	SocketPath   string     `yaml:"socket_path,omitempty"`
+	Error        string     `yaml:"error,omitempty"`
 }
 
 type Escalation struct {

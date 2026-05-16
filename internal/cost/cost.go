@@ -20,7 +20,7 @@ type Entry struct {
 
 type Summary struct {
 	TotalTasks    int                `json:"total_tasks"`
-	TotalEstimate float64           `json:"total_estimate_usd"`
+	TotalEstimate float64            `json:"total_estimate_usd"`
 	ByModel       map[string]float64 `json:"by_model"`
 	ByRuntime     map[string]float64 `json:"by_runtime"`
 	ByStatus      map[string]int     `json:"by_status"`

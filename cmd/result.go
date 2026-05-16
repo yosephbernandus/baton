@@ -18,13 +18,13 @@ import (
 
 func NewResultCmd() *cobra.Command {
 	var (
-		jsonOutput    bool
-		clarification bool
-		escalation    bool
-		filesOnly     bool
-		showOutput      bool
-		showOutputFull  bool
-		clarifyContext  bool
+		jsonOutput     bool
+		clarification  bool
+		escalation     bool
+		filesOnly      bool
+		showOutput     bool
+		showOutputFull bool
+		clarifyContext bool
 	)
 
 	cmd := &cobra.Command{

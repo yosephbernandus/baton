@@ -55,9 +55,9 @@ var Roles = map[string]Role{
 }
 
 type Violation struct {
-	Role         string
-	File         string
-	Reason       string
+	Role   string
+	File   string
+	Reason string
 }
 
 func VerifyBoundary(roleName string, filesChanged []string) []Violation {

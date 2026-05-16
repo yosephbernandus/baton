@@ -25,11 +25,11 @@ var respondableStatuses = map[string]bool{
 
 func NewRespondCmd() *cobra.Command {
 	var (
-		answer    string
+		answer     string
 		answeredBy string
-		reason    string
-		resume    bool
-		deferTask bool
+		reason     string
+		resume     bool
+		deferTask  bool
 	)
 
 	cmd := &cobra.Command{

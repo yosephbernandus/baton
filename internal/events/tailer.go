@@ -48,8 +48,8 @@ func (t *Tailer) Tail(ctx context.Context) (<-chan Event, error) {
 
 	go func() {
 		defer close(ch)
-		defer f.Close()         //nolint:errcheck
-		defer watcher.Close()   //nolint:errcheck
+		defer f.Close()       //nolint:errcheck
+		defer watcher.Close() //nolint:errcheck
 
 		reader := bufio.NewReader(f)
 

@@ -22,7 +22,7 @@ import (
 
 // cancel reason constants for the watchdog goroutine
 const (
-	cancelNone            int32 = iota
+	cancelNone int32 = iota
 	cancelSilenceTimeout
 	cancelAbsoluteTimeout
 )
@@ -48,11 +48,11 @@ type Result struct {
 }
 
 type Runner struct {
-	cfg      *config.Config
-	emitter  *events.Emitter
-	store    *task.Store
-	mu       sync.RWMutex
-	procs    map[string]*exec.Cmd
+	cfg     *config.Config
+	emitter *events.Emitter
+	store   *task.Store
+	mu      sync.RWMutex
+	procs   map[string]*exec.Cmd
 }
 
 func New(cfg *config.Config, emitter *events.Emitter, store *task.Store) *Runner {
@@ -290,7 +290,6 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		ErrorDetail:   errorDetail,
 	}, nil
 }
-
 
 func BuildArgs(rt *config.RuntimeConfig, model, prompt string, s *spec.Spec) []string {
 	var args []string

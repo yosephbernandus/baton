@@ -148,4 +148,3 @@ func (s *Server) Close() error {
 	_ = os.Remove(s.path)
 	return err
 }
-

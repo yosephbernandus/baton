@@ -50,9 +50,9 @@ func testConfig(maxRetries int) *config.Config {
 
 func testSpec() *spec.Spec {
 	return &spec.Spec{
-		What:             "test",
-		Why:              "testing",
-		Constraints:      []string{},
+		What:               "test",
+		Why:                "testing",
+		Constraints:        []string{},
 		AcceptanceCriteria: []string{"works"},
 	}
 }

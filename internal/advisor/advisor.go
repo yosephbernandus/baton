@@ -31,9 +31,9 @@ type Response struct {
 }
 
 const (
-	ActionRetryWithHint    = "retry_with_hint"
-	ActionSkipPhase        = "skip_phase"
-	ActionEscalateToHuman  = "escalate_to_human"
+	ActionRetryWithHint     = "retry_with_hint"
+	ActionSkipPhase         = "skip_phase"
+	ActionEscalateToHuman   = "escalate_to_human"
 	ActionModifyConstraints = "modify_constraints"
 )
 

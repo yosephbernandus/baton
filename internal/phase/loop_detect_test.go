@@ -122,8 +122,8 @@ func TestLoopDetectorThreshold(t *testing.T) {
 	// With 0.5 threshold, partially similar outputs should trigger
 	base := []string{"a", "b", "c", "d"}
 	ld.Record(base)
-	ld.Record([]string{"a", "b", "c", "x"})         // 3/5 = 0.6
-	ld.Record([]string{"a", "b", "c", "y"})         // similar
+	ld.Record([]string{"a", "b", "c", "x"}) // 3/5 = 0.6
+	ld.Record([]string{"a", "b", "c", "y"}) // similar
 	if !ld.IsStuck() {
 		t.Error("should be stuck at 0.5 threshold with >60% similarity")
 	}

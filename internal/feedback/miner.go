@@ -29,11 +29,11 @@ func NewMiner(eventLogPath string, window time.Duration, minOccurrences int) *Mi
 }
 
 type Analysis struct {
-	GeneratedAt        time.Time                    `yaml:"generated_at" json:"generated_at"`
-	EventWindow        EventWindow                  `yaml:"event_window" json:"event_window"`
-	RuntimePerformance map[string]*RuntimeMetrics   `yaml:"runtime_performance" json:"runtime_performance"`
-	PhaseMetrics       map[string]*PhaseMetric      `yaml:"phase_metrics" json:"phase_metrics"`
-	Patterns           []Pattern                    `yaml:"patterns" json:"patterns"`
+	GeneratedAt        time.Time                  `yaml:"generated_at" json:"generated_at"`
+	EventWindow        EventWindow                `yaml:"event_window" json:"event_window"`
+	RuntimePerformance map[string]*RuntimeMetrics `yaml:"runtime_performance" json:"runtime_performance"`
+	PhaseMetrics       map[string]*PhaseMetric    `yaml:"phase_metrics" json:"phase_metrics"`
+	Patterns           []Pattern                  `yaml:"patterns" json:"patterns"`
 }
 
 type EventWindow struct {
@@ -60,11 +60,11 @@ type DomainMetrics struct {
 }
 
 type PhaseMetric struct {
-	TotalRuns      int                `yaml:"total_runs" json:"total_runs"`
-	TotalRetries   int                `yaml:"total_retries" json:"total_retries"`
-	AvgRetries     float64            `yaml:"avg_retries" json:"avg_retries"`
-	LoopDetections int                `yaml:"loop_detections" json:"loop_detections"`
-	Timeouts       int                `yaml:"timeouts" json:"timeouts"`
+	TotalRuns      int                               `yaml:"total_runs" json:"total_runs"`
+	TotalRetries   int                               `yaml:"total_retries" json:"total_retries"`
+	AvgRetries     float64                           `yaml:"avg_retries" json:"avg_retries"`
+	LoopDetections int                               `yaml:"loop_detections" json:"loop_detections"`
+	Timeouts       int                               `yaml:"timeouts" json:"timeouts"`
 	ByComplexity   map[string]*ComplexityPhaseMetric `yaml:"by_complexity,omitempty" json:"by_complexity,omitempty"`
 }
 

@@ -12,11 +12,11 @@ import (
 )
 
 type Config struct {
-	Enabled         bool   `yaml:"enabled"`
-	AutoApply       bool   `yaml:"auto_apply"`
+	Enabled          bool   `yaml:"enabled"`
+	AutoApply        bool   `yaml:"auto_apply"`
 	AutoApplyMaxRisk string `yaml:"auto_apply_max_risk"`
-	MinConfidence   string `yaml:"min_confidence"`
-	PatchDir        string `yaml:"patch_dir"`
+	MinConfidence    string `yaml:"min_confidence"`
+	PatchDir         string `yaml:"patch_dir"`
 }
 
 type Patch struct {

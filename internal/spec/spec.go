@@ -9,21 +9,21 @@ import (
 )
 
 type Spec struct {
-	What               string        `yaml:"what"`
-	Why                string        `yaml:"why"`
-	Constraints        []string      `yaml:"constraints"`
-	ContextFiles       []string      `yaml:"context_files"`
-	RelatedTasks       []RelatedTask `yaml:"related_tasks"`
-	AcceptanceCriteria []string      `yaml:"acceptance_criteria"`
-	Decisions          []Decision    `yaml:"decisions"`
-	WritesTo           []string      `yaml:"writes_to"`
-	Examples           []Example     `yaml:"examples"`
-	AcceptanceChecks   []Check       `yaml:"acceptance_checks"`
-	Domain             string        `yaml:"domain,omitempty"`
-	EstimatedComplexity string       `yaml:"estimated_complexity,omitempty"`
-	Criticality        string        `yaml:"criticality"`
-	SilenceTimeout     string        `yaml:"silence_timeout,omitempty"`
-	AbsoluteTimeout    string        `yaml:"absolute_timeout,omitempty"`
+	What                string        `yaml:"what"`
+	Why                 string        `yaml:"why"`
+	Constraints         []string      `yaml:"constraints"`
+	ContextFiles        []string      `yaml:"context_files"`
+	RelatedTasks        []RelatedTask `yaml:"related_tasks"`
+	AcceptanceCriteria  []string      `yaml:"acceptance_criteria"`
+	Decisions           []Decision    `yaml:"decisions"`
+	WritesTo            []string      `yaml:"writes_to"`
+	Examples            []Example     `yaml:"examples"`
+	AcceptanceChecks    []Check       `yaml:"acceptance_checks"`
+	Domain              string        `yaml:"domain,omitempty"`
+	EstimatedComplexity string        `yaml:"estimated_complexity,omitempty"`
+	Criticality         string        `yaml:"criticality"`
+	SilenceTimeout      string        `yaml:"silence_timeout,omitempty"`
+	AbsoluteTimeout     string        `yaml:"absolute_timeout,omitempty"`
 }
 
 type RelatedTask struct {
