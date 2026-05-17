@@ -139,23 +139,19 @@ func runSetupInteractive(force bool) error {
 	if len(models) > 0 {
 		opts := make([]tui.SelectOption, len(models))
 		for i, m := range models {
-			opts[i] = tui.SelectOption{Label: m}
+			opts[i] = tui.SelectOption{Label: m, Value: m}
 		}
-		opts = append(opts, tui.SelectOption{Label: "auto", Description: "let runtime choose"})
+		opts = append(opts, tui.SelectOption{Label: "auto", Value: "auto", Description: "let runtime choose"})
 
-		idx, err := tui.Select("Which model for coordinator?", opts)
+		result, err := tui.SelectOrInput("Which model for coordinator?", opts)
 		if err != nil {
 			return exitError(1, "prompt error: %v", err)
 		}
-		if idx < 0 {
+		if result == "" {
 			fmt.Println("Setup cancelled.")
 			return nil
 		}
-		if idx < len(models) {
-			orchestratorModel = models[idx]
-		} else {
-			orchestratorModel = "auto"
-		}
+		orchestratorModel = result
 	} else {
 		orchestratorModel = "auto"
 	}
@@ -189,19 +185,19 @@ func runSetupInteractive(force bool) error {
 
 	workerModel := "auto"
 	workerModels := modelsForRuntime(workerRT.Name)
-	if len(workerModels) > 0 && workerRT.Name != orchestratorRT.Name {
+	if len(workerModels) > 0 {
 		opts := make([]tui.SelectOption, len(workerModels))
 		for i, m := range workerModels {
-			opts[i] = tui.SelectOption{Label: m}
+			opts[i] = tui.SelectOption{Label: m, Value: m}
 		}
-		opts = append(opts, tui.SelectOption{Label: "auto", Description: "let runtime choose"})
+		opts = append(opts, tui.SelectOption{Label: "auto", Value: "auto", Description: "let runtime choose"})
 
-		idx, err := tui.Select("Which model for workers?", opts)
+		result, err := tui.SelectOrInput("Which model for workers?", opts)
 		if err != nil {
 			return exitError(1, "prompt error: %v", err)
 		}
-		if idx >= 0 && idx < len(workerModels) {
-			workerModel = workerModels[idx]
+		if result != "" {
+			workerModel = result
 		}
 	}
 
@@ -406,16 +402,47 @@ func runSetupNonInteractive(force bool) error {
 func modelsForRuntime(name string) []string {
 	switch name {
 	case "claude-code":
-		return []string{"claude-opus-4-6", "claude-sonnet-4-6", "haiku"}
+		return []string{"opus", "sonnet", "haiku", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"}
 	case "opencode":
-		return []string{"kimi", "deepseek", "claude-sonnet-4-6"}
+		return queryOpenCodeModels()
 	case "aider":
-		return []string{"gpt-4o", "claude-sonnet-4-6", "deepseek"}
+		return queryAiderModels()
 	case "codex":
-		return []string{"codex", "o4-mini"}
+		return []string{"o4-mini"}
 	default:
 		return nil
 	}
+}
+
+func queryOpenCodeModels() []string {
+	out, err := exec.Command("opencode", "models").Output()
+	if err != nil {
+		return []string{"kimi", "deepseek"}
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 0 {
+		return []string{"kimi", "deepseek"}
+	}
+	// Return first 15 models to keep list manageable
+	if len(lines) > 15 {
+		lines = lines[:15]
+	}
+	return lines
+}
+
+func queryAiderModels() []string {
+	out, err := exec.Command("aider", "--list-models").Output()
+	if err != nil {
+		return []string{"gpt-4o", "claude-sonnet-4-6", "deepseek"}
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 0 {
+		return []string{"gpt-4o", "claude-sonnet-4-6"}
+	}
+	if len(lines) > 15 {
+		lines = lines[:15]
+	}
+	return lines
 }
 
 func generateAgentsYAMLInteractive(allRuntimes []detectedRuntime, orchestrator detectedRuntime, orchModel string, worker detectedRuntime, workerModel string) string {
@@ -465,9 +492,13 @@ func writeRuntimeFlags(b *strings.Builder, name string) {
 		b.WriteString("      - \"--print\"\n")
 		b.WriteString("      - \"--dangerously-skip-permissions\"\n")
 		b.WriteString("    models:\n")
+		b.WriteString("      - opus\n")
+		b.WriteString("      - sonnet\n")
+		b.WriteString("      - haiku\n")
+		b.WriteString("      - claude-opus-4-7\n")
 		b.WriteString("      - claude-opus-4-6\n")
 		b.WriteString("      - claude-sonnet-4-6\n")
-		b.WriteString("      - haiku\n")
+		b.WriteString("      - claude-haiku-4-5\n")
 	case "opencode":
 		b.WriteString("    model_flag: \"-m\"\n")
 		b.WriteString("    context_flag: \"--file\"\n")
