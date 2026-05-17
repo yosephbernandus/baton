@@ -743,6 +743,7 @@ Located at `~/.baton/agents.yaml` or `./.baton/agents.yaml` (project-local takes
 orchestrator:
   runtime: claude-code
   model: opus
+  # instructions_file: ""  # auto-detected from runtime (CLAUDE.md, .cursorrules, etc.)
 
 runtimes:
   opencode:
@@ -1085,58 +1086,109 @@ baton/
 |-- main.go                     # entrypoint, cobra root command
 |-- go.mod
 |-- go.sum
-|-- agents.example.yaml         # example config
+|-- agents.examples.yaml        # example config
+|-- Task.spec.example.yaml      # example task spec
+|-- Project.brief.example.md    # example project brief
 |-- README.md
 |-- ARCHITECTURE.md             # this file
 |
 |-- cmd/
-|   |-- run.go                  # "baton run"
-|   |-- status.go               # "baton status"
-|   |-- list.go                 # "baton list"
-|   |-- result.go               # "baton result"
-|   |-- progress.go             # "baton progress"
-|   |-- guide.go                # "baton guide"
-|   |-- monitor.go              # "baton monitor"
-|   +-- config.go               # "baton config"
+|   |-- run.go                  # "baton run" — spawn task in external runtime
+|   |-- status.go               # "baton status" — show task states
+|   |-- list.go                 # "baton list" — available runtimes/models
+|   |-- result.go               # "baton result" — read task output
+|   |-- progress.go             # "baton progress" — stream worker markers
+|   |-- guide.go                # "baton guide" — send guidance to worker
+|   |-- monitor.go              # "baton monitor" — launch TUI
+|   |-- config.go               # "baton config" — get/set config values
+|   |-- init.go                 # "baton init" — generate coordinator instructions from spec
+|   |-- setup.go                # "baton setup" — scaffold .baton/ directory
+|   |-- doctor.go               # "baton doctor" — validate project health
+|   |-- plan.go                 # "baton plan" — interactive planning
+|   |-- grep.go                 # "baton grep" — content search (rg/grep fallback)
+|   |-- knowledge.go            # "baton knowledge" — compile/query/health
+|   |-- pipeline.go             # "baton pipeline" — run 16-phase pipeline
+|   |-- session.go              # "baton session" — manage pipeline sessions
+|   |-- worker.go               # "baton worker" — conversational worker protocol
+|   |-- feedback.go             # "baton feedback" — event log mining
+|   |-- anneal.go               # "baton anneal" — self-annealing config patches
+|   |-- advise.go               # "baton advise" — escalation advisor
+|   |-- cost.go                 # "baton cost" — token cost tracking
+|   |-- kill.go                 # "baton kill" — terminate running task
+|   |-- wait.go                 # "baton wait" — block until task completes
+|   |-- respond.go              # "baton respond" — reply to worker clarification
+|   |-- defer_cmd.go            # "baton defer" — defer decision
+|   |-- escalate.go             # "baton escalate" — escalate to human
+|   +-- errors.go               # shared ExitErr type
 |
 +-- internal/
-    |-- config/
-    |   +-- config.go           # YAML config parsing, validation
+    |-- config/                 # YAML config parsing, runtime validation
+    |                           # InstructionsFilename() — configurable per runtime
     |
-    |-- spec/
-    |   +-- spec.go             # Task spec parsing, validation, prompt building
+    |-- spec/                   # Task spec parsing, validation, prompt building
     |                           # BuildPromptWithProtocol() injects BATON: marker instructions
     |
-    |-- runner/
-    |   +-- runner.go           # Subprocess + socket server lifecycle
-    |                           # Parses BATON: stdout markers
-    |                           # Broadcasts to socket clients
-    |                           # Handles guide/abort from socket
+    |-- runner/                 # Subprocess + socket server lifecycle
+    |                           # Parses BATON: stdout markers, broadcasts to socket
     |                           # Writes guidance to inbox.ndjson for worker
     |
-    |-- proto/
-    |   |-- marker.go           # Parse BATON:X:payload stdout markers
-    |   +-- message.go          # JSON message types for socket protocol
+    |-- proto/                  # BATON: marker parser (H/P/S/E/M/C/N markers)
+    |                           # JSON socket message types
     |
-    |-- socket/
-    |   |-- server.go           # Per-task Unix domain socket server
-    |   +-- client.go           # Socket client (used by guide/progress commands)
+    |-- socket/                 # Per-task Unix domain socket server + client
     |
-    |-- task/
-    |   +-- task.go             # Task record CRUD, attempt tracking
+    |-- task/                   # Task record CRUD, attempt tracking
     |
-    |-- lock/
-    |   +-- lock.go             # Advisory file lock registry
+    |-- phase/                  # 16-phase pipeline machine, phase definitions
+    |                           # Prompt builder, scratchpad, loop detection
     |
-    |-- brief/
-    |   +-- brief.go            # Project brief loader
+    |-- role/                   # Five-role definitions, boundary verification
     |
-    |-- events/
-    |   +-- events.go           # NDJSON event emitter + tailer
+    |-- skill/                  # Domain skill router, context file loading
     |
-    +-- tui/
-        |-- model.go            # bubbletea TUI monitor
-        +-- ...
+    |-- session/                # Pipeline session manifest, crash recovery
+    |
+    |-- advisor/                # Escalation advisor (opt-in LLM consultation)
+    |
+    |-- feedback/               # Event log miner, runtime/phase metrics
+    |
+    |-- annealing/              # Self-annealing config patch generation
+    |
+    |-- worker/                 # Conversational worker protocol: CLI state machine
+    |                           # Instruction generator, watcher
+    |
+    |-- coordinator/            # Coordinator instruction generator
+    |                           # Generates CLAUDE.md/AGENTS.md/.cursorrules for orchestrator
+    |
+    |-- knowledge/              # AST-based knowledge graph (ADR-023)
+    |   |-- types.go            # PackageFact, FunctionFact, TypeFact, Graph, SoftClaim
+    |   |-- parser.go           # go/ast extraction (Go Layer 1 hard knowledge)
+    |   |-- graph.go            # Dependency graph build/query/BFS traversal
+    |   |-- compiler.go         # Orchestrates: detect → parse → build → store
+    |   |-- store.go            # YAML persistence (.baton/knowledge/)
+    |   |-- injector.go         # Format facts for coordinator context injection
+    |   |-- verifier.go         # Verify soft claims against hard facts
+    |   +-- grep.go             # Content search (ripgrep/bash fallback)
+    |
+    |-- lock/                   # Advisory file lock registry
+    |
+    |-- brief/                  # Project brief loader
+    |
+    |-- events/                 # NDJSON event emitter + tailer + query
+    |
+    |-- git/                    # Git snapshot + change detection
+    |
+    |-- cost/                   # Token cost tracking
+    |
+    |-- routing/                # Task routing logic
+    |
+    |-- decisions/              # Decision persistence
+    |
+    |-- ansi/                   # ANSI color helpers
+    |
+    |-- tui/                    # bubbletea monitor with scrollable per-task output
+    |
+    +-- e2e/                    # End-to-end integration tests
 ```
 
 ## Implementation Notes
@@ -1258,6 +1310,18 @@ Deliverable: any runtime as orchestrator, any runtime as worker. Routing guidanc
 - Cost tracking per task (if token usage detectable from worker output)
 - Decision persistence to project docs (auto-append to ARCHITECTURE.md)
 - Coherence checkpoint prompts (generated after every N completed tasks)
+
+### Phase 9: Knowledge Graph + Multi-Runtime Polish
+- `baton knowledge compile` — go/ast parsing, graph build, YAML persistence
+- `baton knowledge query` — BFS traversal, token-budgeted fact injection
+- `baton knowledge health` — staleness detection via source hashing
+- `baton grep` — unified content search (ripgrep/bash, definition classification)
+- Configurable instructions filename (ADR-022) — runtime-aware output
+- `baton init` — generate coordinator instructions from task spec
+- `baton setup` — scaffold .baton/ directory for new projects
+- `baton doctor` — validate project health
+- Planned: LSP client for multi-language hard knowledge (ADR-023)
+- Planned: LLM soft knowledge generation with verification pipeline
 
 ## Interaction Examples
 
@@ -1490,4 +1554,121 @@ cmd/pipeline.go ─→ phase.NewPipeline() ─→ runner.Run() (per phase)
 
 cmd/feedback.go ─→ feedback.NewMiner().Analyze()
 cmd/anneal.go   ─→ annealing.New().GeneratePatches()
+
+cmd/init.go     ─→ coordinator.GenerateInstructions() → writes CLAUDE.md/AGENTS.md/.cursorrules
+cmd/grep.go     ─→ knowledge.Grep() → ripgrep or bash grep fallback
+cmd/knowledge.go─→ knowledge.Compile() / knowledge.Load() / knowledge.Inject()
+```
+
+---
+
+## Knowledge Graph (Phase 9)
+
+Deterministic, structure-based knowledge system that provides the coordinator with verified facts about the codebase. No RAG, no embeddings, no vector DB.
+
+### Why Not RAG
+
+Code meaning lives in **structure**, not text similarity. `GetUser` and `SetUser` look similar in vector space but are opposite operations. A deterministic graph gives ground truth that constrains non-deterministic LLM output.
+
+### Two-Layer Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│ Layer 1: Hard Knowledge (deterministic)      │
+│                                              │
+│   Go → go/ast (stdlib, always available)     │
+│   All languages → LSP (if server installed)  │
+│                                              │
+│   100% correct, machine-parsed               │
+└─────────────────────────────────────────────┘
+         ↓ fallback when no LSP
+┌─────────────────────────────────────────────┐
+│ Layer 2: Soft Knowledge (LLM + verification) │
+│                                              │
+│   LLM reads source → generates claims        │
+│   Each claim verified (grep/AST/LSP)         │
+│   Wrong claims rejected before storage       │
+└─────────────────────────────────────────────┘
+```
+
+### Current Implementation (Layer 1, Go)
+
+Uses `go/ast`, `go/parser`, `go/token` — no external dependency. Extracts:
+- Package imports (dependency graph)
+- Exported function signatures (name, params, returns)
+- Type definitions (structs, interfaces, fields)
+- Source hash for staleness detection
+
+Pipeline: `Compile(dir)` → `ParsePackage()` per package → `BuildGraph()` → `Save()` to YAML.
+
+Query: map file → package → BFS traverse graph N hops → collect relevant facts → format within token budget.
+
+### Commands
+
+```bash
+baton knowledge compile              # Parse codebase, build graph
+baton knowledge query <file-or-pkg>  # Show relevant facts for a file
+baton knowledge health               # Staleness report
+baton grep <pattern>                 # Content search (rg/bash fallback)
+baton grep <pattern> --json          # Structured output for agents
+baton grep <pattern> --glob "*.go"   # File filter
+```
+
+### Content Search (`baton grep`)
+
+Unified search with graceful fallback:
+- ripgrep installed → use `rg` (smart-case, ranked)
+- Not installed → use `grep -rn` (basic, works everywhere)
+- Output: same format regardless of backend
+- Classification: matches tagged as `definition` or `usage`
+- Default exclusions: .git, vendor, node_modules, .baton, testdata
+
+### Storage
+
+```
+.baton/knowledge/
+  graph.yaml              # dependency edges between packages
+  index.yaml              # all packages + summary
+  health.yaml             # compile time, method, staleness
+  packages/
+    internal-auth.yaml    # per-package hard facts
+    internal-api.yaml
+```
+
+### Planned: LSP + Multi-Language (ADR-023)
+
+| Language | Primary | Fallback |
+|----------|---------|----------|
+| Go | gopls (LSP) | go/ast (stdlib) |
+| Python | pyright (LSP) | LLM fallback |
+| TypeScript | tsserver (LSP) | LLM fallback |
+| Rust | rust-analyzer (LSP) | LLM fallback |
+
+LSP auto-detection + install flow. When LSP becomes available, hard knowledge replaces structural soft claims. Behavioral soft claims (invariants LSP can't see) persist permanently.
+
+---
+
+## Configurable Instructions File
+
+Baton generates coordinator instructions via `baton init`. The output filename is configurable based on orchestrator runtime (ADR-022).
+
+### Resolution Order
+
+1. CLI flag: `baton init --output custom.md` (highest precedence)
+2. Config: `orchestrator.instructions_file: AGENTS.md`
+3. Auto-detect from `orchestrator.runtime`:
+
+| Runtime | Default Filename |
+|---------|-----------------|
+| claude-code | CLAUDE.md |
+| cursor | .cursorrules |
+| windsurf | .windsurfrules |
+| cline | .clinerules |
+| (unknown) | AGENTS.md |
+
+```yaml
+orchestrator:
+  runtime: claude-code
+  model: sonnet
+  instructions_file: ""  # empty = auto-detect from runtime
 ```
