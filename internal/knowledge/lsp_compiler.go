@@ -18,7 +18,7 @@ func CompileWithLSP(projectDir string, lang DetectedLang) (*LSPCompileResult, er
 	if err != nil {
 		return nil, fmt.Errorf("starting %s: %w", lang.LSP, err)
 	}
-	defer client.Shutdown()
+	defer func() { _ = client.Shutdown() }()
 
 	files, err := findSourceFiles(projectDir, lang.Name)
 	if err != nil {
@@ -172,7 +172,7 @@ func findSourceFiles(projectDir, lang string) ([]string, error) {
 	}
 
 	var files []string
-	filepath.Walk(projectDir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(projectDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}

@@ -70,7 +70,7 @@ func Update(projectDir string, changedFiles []string) error {
 						SourceHash: hashDir(dir),
 					}
 					for _, f := range files {
-						client.OpenFile(f)
+						_ = client.OpenFile(f)
 						symbols, err := client.DocumentSymbols(f)
 						client.CloseFile(f)
 						if err != nil {
@@ -78,7 +78,7 @@ func Update(projectDir string, changedFiles []string) error {
 						}
 						extractLSPSymbols(fact, symbols, f, projectDir)
 					}
-					client.Shutdown()
+					_ = client.Shutdown()
 					if len(fact.Functions) > 0 || len(fact.Types) > 0 {
 						newFact = fact
 					}

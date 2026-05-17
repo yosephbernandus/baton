@@ -52,8 +52,7 @@ func (m selectModel) Init() tea.Cmd {
 }
 
 func (m selectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	if msg, ok := msg.(tea.KeyMsg); ok {
 		switch msg.String() {
 		case "up", "k":
 			if m.cursor > 0 {
@@ -177,8 +176,7 @@ func (m selectInputModel) Init() tea.Cmd {
 }
 
 func (m selectInputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	if msg, ok := msg.(tea.KeyMsg); ok {
 		if m.inputMode {
 			switch msg.String() {
 			case "enter":

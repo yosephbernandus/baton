@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -110,7 +109,7 @@ func NewLSPClient(command string, args []string, rootDir string) (*LSPClient, er
 	}
 
 	if err := client.initialize(rootDir); err != nil {
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
 
@@ -180,7 +179,7 @@ func (c *LSPClient) CloseFile(filePath string) {
 			"uri": pathToURI(absPath),
 		},
 	}
-	c.notify("textDocument/didClose", params)
+	_ = c.notify("textDocument/didClose", params)
 }
 
 func (c *LSPClient) DocumentSymbols(filePath string) ([]DocumentSymbol, error) {
@@ -251,10 +250,10 @@ func (c *LSPClient) WorkspaceSymbols(query string) ([]WorkspaceSymbol, error) {
 func (c *LSPClient) Shutdown() error {
 	_, err := c.request("shutdown", nil)
 	if err != nil {
-		c.cmd.Process.Kill()
+		_ = c.cmd.Process.Kill()
 		return err
 	}
-	c.notify("exit", nil)
+	_ = c.notify("exit", nil)
 	return c.cmd.Wait()
 }
 
@@ -373,17 +372,6 @@ func pathToURI(path string) string {
 	// url.PathEscape would escape slashes, which we don't want
 	// Only escape special chars in path segments
 	return "file://" + path
-}
-
-func uriToPath(uri string) string {
-	if strings.HasPrefix(uri, "file://") {
-		path := strings.TrimPrefix(uri, "file://")
-		if decoded, err := url.PathUnescape(path); err == nil {
-			return decoded
-		}
-		return path
-	}
-	return uri
 }
 
 func SymbolKindName(kind int) string {

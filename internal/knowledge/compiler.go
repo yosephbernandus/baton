@@ -141,7 +141,7 @@ func DetectLanguages(projectDir string) []DetectedLang {
 	counts := map[string]int{}
 	lspMap := map[string]string{}
 
-	filepath.Walk(projectDir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(projectDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
