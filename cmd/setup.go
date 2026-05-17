@@ -315,6 +315,11 @@ func runSetupInteractive(force bool) error {
 	}
 
 	fmt.Println()
+	fmt.Println("You can change these settings anytime:")
+	fmt.Printf("  Runtime & models:  .baton/agents.yaml\n")
+	fmt.Printf("  Project context:   .baton/project-brief.md\n")
+	fmt.Printf("  Knowledge graph:   baton knowledge compile\n")
+	fmt.Println()
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Edit .baton/project-brief.md with project details")
 	fmt.Println("  2. Write a task spec:")
