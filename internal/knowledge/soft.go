@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/yosephbernandus/baton/internal/config"
 )
 
 type SoftCompileResult struct {
@@ -66,13 +68,27 @@ type softType struct {
 	Exported bool     `json:"exported"`
 }
 
-func CompileSoft(projectDir string, lang DetectedLang) (*SoftCompileResult, error) {
+type SoftOpts struct {
+	Runtime string // runtime name from config (e.g. "claude-code", "opencode")
+	Model   string // model to use (e.g. "haiku", "gpt-4o-mini")
+	Config  *config.Config
+}
+
+func CompileSoft(projectDir string, lang DetectedLang, opts SoftOpts) (*SoftCompileResult, error) {
+	if opts.Config == nil || opts.Runtime == "" {
+		return nil, fmt.Errorf("no runtime configured — set orchestrator.runtime in agents.yaml or pass --runtime/--model flags")
+	}
+
+	rt, ok := opts.Config.Runtimes[opts.Runtime]
+	if !ok {
+		return nil, fmt.Errorf("runtime %q not found in config (available: %s)", opts.Runtime, availableRuntimes(opts.Config))
+	}
+
 	files, err := findSourceFiles(projectDir, lang.Name)
 	if err != nil {
 		return nil, err
 	}
 
-	// Batch files to stay within token limits (~50 files per batch)
 	batches := batchFiles(files, 50)
 	var allFacts []*PackageFact
 
@@ -80,7 +96,7 @@ func CompileSoft(projectDir string, lang DetectedLang) (*SoftCompileResult, erro
 		fmt.Fprintf(os.Stderr, "  analyzing batch %d/%d (%d files)...\n", i+1, len(batches), len(batch))
 
 		prompt := buildSoftPrompt(batch, projectDir)
-		output, err := runLLMAnalysis(projectDir, prompt)
+		output, err := runLLMAnalysis(projectDir, prompt, &rt, opts.Model)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: batch %d failed: %v\n", i+1, err)
 			continue
@@ -99,12 +115,22 @@ func CompileSoft(projectDir string, lang DetectedLang) (*SoftCompileResult, erro
 		return nil, fmt.Errorf("LLM analysis produced no results")
 	}
 
-	// Verify claims via grep
 	verified := verifySoftFacts(projectDir, allFacts)
 
 	return &SoftCompileResult{
 		Facts: verified,
 	}, nil
+}
+
+func availableRuntimes(cfg *config.Config) string {
+	var names []string
+	for k := range cfg.Runtimes {
+		names = append(names, k)
+	}
+	if len(names) == 0 {
+		return "(none)"
+	}
+	return strings.Join(names, ", ")
 }
 
 func buildSoftPrompt(files []string, projectDir string) string {
@@ -128,20 +154,39 @@ func buildSoftPrompt(files []string, projectDir string) string {
 	return b.String()
 }
 
-func runLLMAnalysis(projectDir, prompt string) (string, error) {
-	// Use whatever LLM CLI is available: claude, opencode, etc.
-	// Priority: claude (Anthropic CLI) → opencode → generic
-	var cmd *exec.Cmd
-
-	if path, err := exec.LookPath("claude"); err == nil {
-		cmd = exec.Command(path, "--print", "--model", "haiku", prompt)
-	} else if path, err := exec.LookPath("opencode"); err == nil {
-		cmd = exec.Command(path, "run", prompt)
-	} else {
-		return "", fmt.Errorf("no LLM CLI available (install 'claude' CLI or 'opencode')")
+func runLLMAnalysis(projectDir, prompt string, rt *config.RuntimeConfig, model string) (string, error) {
+	cmdPath, err := exec.LookPath(rt.Command)
+	if err != nil {
+		return "", fmt.Errorf("runtime command %q not found in PATH", rt.Command)
 	}
 
+	stdinMode := rt.PromptMode == "stdin"
+
+	var args []string
+	for _, p := range rt.Positional {
+		if p == "{{prompt}}" {
+			if !stdinMode {
+				args = append(args, prompt)
+			}
+		} else {
+			args = append(args, p)
+		}
+	}
+	if rt.ModelFlag != "" && model != "" {
+		args = append(args, rt.ModelFlag, model)
+	}
+	args = append(args, rt.ExtraFlags...)
+	if rt.PromptFlag != "" && !stdinMode {
+		args = append(args, rt.PromptFlag, prompt)
+	}
+
+	cmd := exec.Command(cmdPath, args...)
 	cmd.Dir = projectDir
+
+	if stdinMode {
+		cmd.Stdin = strings.NewReader(prompt)
+	}
+
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/yosephbernandus/baton/internal/config"
 	"github.com/yosephbernandus/baton/internal/knowledge"
 )
 
@@ -25,7 +26,11 @@ func NewKnowledgeCmd() *cobra.Command {
 }
 
 func newKnowledgeCompileCmd() *cobra.Command {
-	var soft bool
+	var (
+		soft    bool
+		runtime string
+		model   string
+	)
 
 	cmd := &cobra.Command{
 		Use:           "compile",
@@ -62,7 +67,6 @@ func newKnowledgeCompileCmd() *cobra.Command {
 			}
 			fmt.Println()
 
-			// If no LSP available and --soft not set, show actionable options
 			if !hasCompilable && !soft {
 				fmt.Println("No LSP available for detected languages.")
 				fmt.Println()
@@ -79,10 +83,43 @@ func newKnowledgeCompileCmd() *cobra.Command {
 				return exitError(1, "run with --soft for LLM fallback, or install LSP above")
 			}
 
+			var softOpts knowledge.SoftOpts
+			if soft {
+				cfg, err := config.LoadConfig()
+				if err != nil && runtime == "" {
+					return exitError(2, "--soft requires runtime config: %v\nPass --runtime and --model flags, or run 'baton setup'", err)
+				}
+
+				if runtime == "" && cfg != nil {
+					runtime = cfg.Orchestrator.Runtime
+					if runtime == "" {
+						runtime = cfg.Defaults.Runtime
+					}
+				}
+				if model == "" && cfg != nil {
+					model = cfg.Orchestrator.Model
+					if model == "" {
+						model = cfg.Defaults.Model
+					}
+				}
+				if runtime == "" {
+					return exitError(2, "no runtime configured for --soft\nPass --runtime flag or set orchestrator.runtime in agents.yaml")
+				}
+
+				softOpts = knowledge.SoftOpts{
+					Runtime: runtime,
+					Model:   model,
+					Config:  cfg,
+				}
+			}
+
 			start := time.Now()
 			fmt.Println("Compiling knowledge graph...")
 
-			result, err := knowledge.CompileWithOpts(cwd, knowledge.CompileOpts{Soft: soft})
+			result, err := knowledge.CompileWithOpts(cwd, knowledge.CompileOpts{
+				Soft:     soft,
+				SoftOpts: softOpts,
+			})
 			if err != nil {
 				return exitError(1, "compile failed: %v", err)
 			}
@@ -103,6 +140,8 @@ func newKnowledgeCompileCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&soft, "soft", false, "Use LLM analysis as fallback when LSP unavailable")
+	cmd.Flags().StringVar(&runtime, "runtime", "", "Runtime for soft analysis (e.g. claude-code, opencode)")
+	cmd.Flags().StringVar(&model, "model", "", "Model for soft analysis (e.g. haiku, gpt-4o-mini)")
 	return cmd
 }
 

@@ -17,7 +17,8 @@ type CompileResult struct {
 }
 
 type CompileOpts struct {
-	Soft bool // use LLM fallback when LSP unavailable
+	Soft     bool     // use LLM fallback when LSP unavailable
+	SoftOpts SoftOpts // runtime config for soft compilation
 }
 
 func Compile(projectDir string) (*CompileResult, error) {
@@ -48,7 +49,7 @@ func CompileWithOpts(projectDir string, opts CompileOpts) (*CompileResult, error
 				fmt.Fprintf(os.Stderr, "warning: %s LSP failed: %v\n", lang.Name, err)
 				if opts.Soft {
 					fmt.Fprintf(os.Stderr, "falling back to LLM analysis for %s...\n", lang.Name)
-					softResult, err := CompileSoft(projectDir, lang)
+					softResult, err := CompileSoft(projectDir, lang, opts.SoftOpts)
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "warning: %s soft analysis failed: %v\n", lang.Name, err)
 					} else {
@@ -61,7 +62,7 @@ func CompileWithOpts(projectDir string, opts CompileOpts) (*CompileResult, error
 
 		case opts.Soft:
 			fmt.Fprintf(os.Stderr, "compiling %s via LLM analysis (soft)...\n", lang.Name)
-			softResult, err := CompileSoft(projectDir, lang)
+			softResult, err := CompileSoft(projectDir, lang, opts.SoftOpts)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "warning: %s soft analysis failed: %v\n", lang.Name, err)
 				continue
