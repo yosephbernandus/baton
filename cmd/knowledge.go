@@ -19,6 +19,7 @@ func NewKnowledgeCmd() *cobra.Command {
 	cmd.AddCommand(newKnowledgeCompileCmd())
 	cmd.AddCommand(newKnowledgeQueryCmd())
 	cmd.AddCommand(newKnowledgeHealthCmd())
+	cmd.AddCommand(newKnowledgeUpdateCmd())
 
 	return cmd
 }
@@ -63,7 +64,8 @@ func newKnowledgeCompileCmd() *cobra.Command {
 
 			// If no LSP available and --soft not set, show actionable options
 			if !hasCompilable && !soft {
-				fmt.Println("No LSP available for detected languages.\n")
+				fmt.Println("No LSP available for detected languages.")
+				fmt.Println()
 				fmt.Println("Options:")
 				for _, l := range langs {
 					if l.Name == "go" {
@@ -80,7 +82,7 @@ func newKnowledgeCompileCmd() *cobra.Command {
 			start := time.Now()
 			fmt.Println("Compiling knowledge graph...")
 
-			result, err := knowledge.Compile(cwd)
+			result, err := knowledge.CompileWithOpts(cwd, knowledge.CompileOpts{Soft: soft})
 			if err != nil {
 				return exitError(1, "compile failed: %v", err)
 			}
@@ -192,6 +194,28 @@ func newKnowledgeHealthCmd() *cobra.Command {
 					fmt.Printf("  - %s\n", s)
 				}
 				fmt.Println("\nRun 'baton knowledge compile' to refresh.")
+			}
+
+			return nil
+		},
+	}
+}
+
+func newKnowledgeUpdateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:           "update <file> [file...]",
+		Short:         "Incrementally update knowledge for changed files",
+		Args:          cobra.MinimumNArgs(1),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return exitError(1, "getting working directory: %v", err)
+			}
+
+			if err := knowledge.Update(cwd, args); err != nil {
+				return exitError(1, "update failed: %v", err)
 			}
 
 			return nil

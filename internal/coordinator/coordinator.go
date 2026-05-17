@@ -14,6 +14,7 @@ type CoordinatorConfig struct {
 	Complexity string
 	BatonBin   string
 	Config     *config.Config
+	ProjectDir string
 }
 
 type DispatchTarget struct {
@@ -54,6 +55,7 @@ func GenerateCoordinatorInstructions(cfg CoordinatorConfig) string {
 	b.WriteString(buildStuckProtocol(cfg.BatonBin))
 	b.WriteString(buildCommandReference(cfg.BatonBin, cfg.TaskID))
 	b.WriteString(buildPhaseGuidance(active))
+	b.WriteString(buildKnowledgeSection(cfg))
 	b.WriteString(buildReflectionSection(active))
 
 	return b.String()

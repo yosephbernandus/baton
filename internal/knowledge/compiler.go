@@ -16,7 +16,15 @@ type CompileResult struct {
 	PackageCount int
 }
 
+type CompileOpts struct {
+	Soft bool // use LLM fallback when LSP unavailable
+}
+
 func Compile(projectDir string) (*CompileResult, error) {
+	return CompileWithOpts(projectDir, CompileOpts{})
+}
+
+func CompileWithOpts(projectDir string, opts CompileOpts) (*CompileResult, error) {
 	langs := DetectLanguages(projectDir)
 	if len(langs) == 0 {
 		return nil, fmt.Errorf("no source files detected in %s", projectDir)
@@ -38,17 +46,35 @@ func Compile(projectDir string) (*CompileResult, error) {
 			lspResult, err := CompileWithLSP(projectDir, lang)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "warning: %s LSP failed: %v\n", lang.Name, err)
+				if opts.Soft {
+					fmt.Fprintf(os.Stderr, "falling back to LLM analysis for %s...\n", lang.Name)
+					softResult, err := CompileSoft(projectDir, lang)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "warning: %s soft analysis failed: %v\n", lang.Name, err)
+					} else {
+						allFacts = append(allFacts, softResult.Facts...)
+					}
+				}
 				continue
 			}
 			allFacts = append(allFacts, lspResult.Facts...)
 
+		case opts.Soft:
+			fmt.Fprintf(os.Stderr, "compiling %s via LLM analysis (soft)...\n", lang.Name)
+			softResult, err := CompileSoft(projectDir, lang)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: %s soft analysis failed: %v\n", lang.Name, err)
+				continue
+			}
+			allFacts = append(allFacts, softResult.Facts...)
+
 		default:
-			fmt.Fprintf(os.Stderr, "skipping %s: %s not installed\n", lang.Name, lang.LSP)
+			fmt.Fprintf(os.Stderr, "skipping %s: %s not installed (use --soft for LLM fallback)\n", lang.Name, lang.LSP)
 		}
 	}
 
 	if len(allFacts) == 0 {
-		return nil, fmt.Errorf("no packages compiled (check LSP availability)")
+		return nil, fmt.Errorf("no packages compiled (install LSP or use --soft)")
 	}
 
 	graph := BuildGraph(allFacts)

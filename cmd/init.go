@@ -127,12 +127,14 @@ worker_pid: %d
 	}
 
 	// Generate coordinator instructions
+	cwd, _ := os.Getwd()
 	ccfg := coordinator.CoordinatorConfig{
 		TaskID:     taskID,
 		Spec:       s,
 		Complexity: complexity,
 		BatonBin:   batonBin,
 		Config:     cfg,
+		ProjectDir: cwd,
 	}
 	instructions := coordinator.GenerateCoordinatorInstructions(ccfg)
 

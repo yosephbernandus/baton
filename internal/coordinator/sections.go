@@ -2,8 +2,10 @@ package coordinator
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/yosephbernandus/baton/internal/knowledge"
 	"github.com/yosephbernandus/baton/internal/phase"
 	"github.com/yosephbernandus/baton/internal/role"
 	"github.com/yosephbernandus/baton/internal/spec"
@@ -264,6 +266,45 @@ func buildPhaseGuidance(phases []phase.Phase) string {
 	}
 
 	return b.String()
+}
+
+func buildKnowledgeSection(cfg CoordinatorConfig) string {
+	if cfg.ProjectDir == "" {
+		return ""
+	}
+
+	graph, err := knowledge.Load(cfg.ProjectDir)
+	if err != nil {
+		return ""
+	}
+
+	// Use spec's context_files and writes_to to determine relevant packages
+	var queryFiles []string
+	if cfg.Spec != nil {
+		queryFiles = append(queryFiles, cfg.Spec.ContextFiles...)
+		queryFiles = append(queryFiles, cfg.Spec.WritesTo...)
+	}
+
+	if len(queryFiles) == 0 {
+		return ""
+	}
+
+	modPath := ""
+	if data, err := os.ReadFile(cfg.ProjectDir + "/go.mod"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "module ") {
+				modPath = strings.TrimSpace(strings.TrimPrefix(line, "module "))
+				break
+			}
+		}
+	}
+
+	output := knowledge.Inject(graph, queryFiles, modPath, knowledge.DefaultTokenBudget)
+	if output == "" {
+		return ""
+	}
+
+	return "\n" + output + "\n"
 }
 
 func buildReflectionSection(phases []phase.Phase) string {
