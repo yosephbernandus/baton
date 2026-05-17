@@ -10,3 +10,13 @@ CLAUDE.md
 
 # ADR docs (local only)
 docs/adr/
+
+# Baton runtime data
+.baton/tasks/
+.baton/events.ndjson*
+.baton/locks.yaml
+.baton/results/
+.baton/session.yaml
+.baton/feedback/
+.baton/annealing/
+.baton/knowledge/
