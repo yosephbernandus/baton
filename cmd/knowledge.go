@@ -52,7 +52,7 @@ func newKnowledgeCompileCmd() *cobra.Command {
 			fmt.Printf("  Packages:  %d\n", result.Health.PackageCount)
 			fmt.Printf("  Functions: %d\n", result.Health.FunctionCount)
 			fmt.Printf("  Types:     %d\n", result.Health.TypeCount)
-			fmt.Printf("  Stored:    %s\n", filepath.Join(knowledge.KnowledgeDir))
+			fmt.Printf("  Stored:    %s\n", knowledge.KnowledgeDir)
 
 			return nil
 		},

@@ -26,9 +26,9 @@ func ParsePackage(dir string, modulePath string) (*PackageFact, error) {
 		return nil, fmt.Errorf("no Go packages in %s", dir)
 	}
 
-	var pkg *ast.Package
+	var pkgFiles map[string]*ast.File
 	for _, p := range pkgs {
-		pkg = p
+		pkgFiles = p.Files
 		break
 	}
 
@@ -47,7 +47,7 @@ func ParsePackage(dir string, modulePath string) (*PackageFact, error) {
 	}
 
 	imports := map[string]bool{}
-	for filename, file := range pkg.Files {
+	for filename, file := range pkgFiles {
 		base := filepath.Base(filename)
 
 		for _, imp := range file.Imports {
