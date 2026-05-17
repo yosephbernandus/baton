@@ -42,6 +42,7 @@ func main() {
 		cmd.NewSetupCmd(),
 		cmd.NewDoctorCmd(),
 		cmd.NewPlanCmd(),
+		cmd.NewKnowledgeCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
