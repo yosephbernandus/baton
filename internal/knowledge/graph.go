@@ -93,7 +93,13 @@ func (g *Graph) Query(files []string, modulePath string, maxHops int) []*Package
 func fileToPackage(file, modulePath string) string {
 	dir := filepath.Dir(file)
 	if dir == "." {
+		if modulePath == "" {
+			return ""
+		}
 		return modulePath
+	}
+	if modulePath == "" {
+		return dir
 	}
 	return modulePath + "/" + dir
 }

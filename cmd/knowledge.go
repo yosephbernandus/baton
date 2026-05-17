@@ -24,7 +24,9 @@ func NewKnowledgeCmd() *cobra.Command {
 }
 
 func newKnowledgeCompileCmd() *cobra.Command {
-	return &cobra.Command{
+	var soft bool
+
+	cmd := &cobra.Command{
 		Use:           "compile",
 		Short:         "Parse codebase and build knowledge graph",
 		SilenceUsage:  true,
@@ -33,6 +35,46 @@ func newKnowledgeCompileCmd() *cobra.Command {
 			cwd, err := os.Getwd()
 			if err != nil {
 				return exitError(1, "getting working directory: %v", err)
+			}
+
+			fmt.Println("Detecting project languages...")
+			langs := knowledge.DetectLanguages(cwd)
+			if len(langs) == 0 {
+				return exitError(1, "no source files detected in %s", cwd)
+			}
+
+			hasCompilable := false
+			for _, l := range langs {
+				status := "LSP not found"
+				if l.Available {
+					status = l.LSP + " ✓"
+					hasCompilable = true
+				}
+				if l.Name == "go" {
+					status = "go/ast (stdlib)"
+					hasCompilable = true
+					if l.Available {
+						status = l.LSP + " ✓ (+ go/ast fallback)"
+					}
+				}
+				fmt.Printf("  %-12s %4d files   %s\n", l.Name, l.FileCount, status)
+			}
+			fmt.Println()
+
+			// If no LSP available and --soft not set, show actionable options
+			if !hasCompilable && !soft {
+				fmt.Println("No LSP available for detected languages.\n")
+				fmt.Println("Options:")
+				for _, l := range langs {
+					if l.Name == "go" {
+						continue
+					}
+					fmt.Printf("  [install]  %s\n", lspInstallHint(l))
+				}
+				fmt.Printf("  [soft]     re-run with --soft to use LLM analysis (costs tokens)\n")
+				fmt.Printf("  [skip]     skip unsupported languages\n")
+				fmt.Println()
+				return exitError(1, "run with --soft for LLM fallback, or install LSP above")
 			}
 
 			start := time.Now()
@@ -57,6 +99,28 @@ func newKnowledgeCompileCmd() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&soft, "soft", false, "Use LLM analysis as fallback when LSP unavailable")
+	return cmd
+}
+
+func lspInstallHint(l knowledge.DetectedLang) string {
+	switch l.Name {
+	case "python":
+		return "pip install pyright  (or)  npm i -g pyright"
+	case "typescript":
+		return "npm i -g typescript-language-server typescript"
+	case "rust":
+		return "rustup component add rust-analyzer"
+	case "java":
+		return "install Eclipse JDT LS (jdtls)"
+	case "ruby":
+		return "gem install ruby-lsp"
+	case "cpp":
+		return "brew install llvm  (includes clangd)"
+	default:
+		return "install " + l.LSP
+	}
 }
 
 func newKnowledgeQueryCmd() *cobra.Command {
@@ -77,10 +141,7 @@ func newKnowledgeQueryCmd() *cobra.Command {
 				return exitError(1, "loading knowledge: %v (run 'baton knowledge compile' first)", err)
 			}
 
-			modPath, err := readModPath(cwd)
-			if err != nil {
-				return exitError(1, "reading module path: %v", err)
-			}
+			modPath, _ := readModPath(cwd) // empty for non-Go projects
 
 			output := knowledge.Inject(graph, args, modPath, knowledge.DefaultTokenBudget)
 			if output == "" {
