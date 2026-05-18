@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/yosephbernandus/baton/internal/knowledge"
 )
 
 type Router struct {
@@ -18,6 +20,20 @@ func NewRouter(skillDir string, domainMap map[string]string) *Router {
 		skillDir = ".baton/skills"
 	}
 	return &Router{SkillDir: skillDir, DomainMap: domainMap}
+}
+
+// InferDomainFromGraph uses the knowledge graph to infer domain from package
+// structure, imports, types, and function signatures. Falls back to extension-based
+// inference if graph is nil or yields no result.
+func InferDomainFromGraph(graph *knowledge.Graph, contextFiles []string, modulePath string) string {
+	if graph != nil {
+		signals := knowledge.InferDomains(graph, contextFiles, modulePath)
+		top := knowledge.TopDomain(signals)
+		if top != "" {
+			return top
+		}
+	}
+	return InferDomain(contextFiles)
 }
 
 func (r *Router) LoadContext(domain string) (string, error) {

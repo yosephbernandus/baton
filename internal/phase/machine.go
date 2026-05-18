@@ -3,6 +3,7 @@ package phase
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/yosephbernandus/baton/internal/brief"
 	"github.com/yosephbernandus/baton/internal/config"
 	"github.com/yosephbernandus/baton/internal/events"
+	"github.com/yosephbernandus/baton/internal/knowledge"
 	"github.com/yosephbernandus/baton/internal/proto"
 	"github.com/yosephbernandus/baton/internal/role"
 	"github.com/yosephbernandus/baton/internal/runner"
@@ -553,16 +555,62 @@ func (p *Pipeline) loadSkillContext() string {
 	if p.spec != nil {
 		domain = p.spec.Domain
 	}
+
+	// Try graph-aware domain inference first, fall back to extension-based
 	if domain == "" && p.spec != nil {
-		domain = skill.InferDomain(p.spec.ContextFiles)
+		cwd, _ := os.Getwd()
+		graph, _ := knowledge.Load(cwd)
+		modPath := ""
+		if data, err := os.ReadFile("go.mod"); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.HasPrefix(line, "module ") {
+					modPath = strings.TrimSpace(strings.TrimPrefix(line, "module "))
+					break
+				}
+			}
+		}
+		domain = skill.InferDomainFromGraph(graph, p.spec.ContextFiles, modPath)
 	}
 	if domain == "" {
 		return ""
 	}
 
 	router := skill.NewRouter(p.cfg.Skills.Dir, p.cfg.Skills.DomainMap)
-	ctx, _ := router.LoadContext(domain)
-	return ctx
+	skillCtx, _ := router.LoadContext(domain)
+
+	// Merge structural knowledge into skill context
+	var knowledgeCtx string
+	if p.spec != nil {
+		cwd, _ := os.Getwd()
+		graph, err := knowledge.Load(cwd)
+		if err == nil {
+			modPath := ""
+			if data, err := os.ReadFile("go.mod"); err == nil {
+				for _, line := range strings.Split(string(data), "\n") {
+					if strings.HasPrefix(line, "module ") {
+						modPath = strings.TrimSpace(strings.TrimPrefix(line, "module "))
+						break
+					}
+				}
+			}
+			queryFiles := append(p.spec.ContextFiles, p.spec.WritesTo...)
+			knowledgeCtx = knowledge.Inject(graph, queryFiles, modPath, knowledge.DefaultTokenBudget)
+		}
+	}
+
+	if skillCtx == "" && knowledgeCtx == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	if knowledgeCtx != "" {
+		b.WriteString(knowledgeCtx)
+	}
+	if skillCtx != "" {
+		b.WriteString("## Domain Skills\n\n")
+		b.WriteString(skillCtx)
+	}
+	return b.String()
 }
 
 func (p *Pipeline) resolveMaxRetries() int {
