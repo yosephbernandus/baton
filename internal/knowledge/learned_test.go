@@ -55,7 +55,7 @@ func TestLearnedDomains_ClassifyType(t *testing.T) {
 func TestSaveLoadLearnedDomains(t *testing.T) {
 	dir := t.TempDir()
 	projectDir := filepath.Join(dir, "project")
-	os.MkdirAll(filepath.Join(projectDir, ".baton", "knowledge"), 0o755)
+	_ = os.MkdirAll(filepath.Join(projectDir, ".baton", "knowledge"), 0o755)
 
 	ld := &LearnedDomains{
 		Imports: map[string]string{

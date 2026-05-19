@@ -593,7 +593,9 @@ func (p *Pipeline) loadSkillContext() string {
 					}
 				}
 			}
-			queryFiles := append(p.spec.ContextFiles, p.spec.WritesTo...)
+			queryFiles := make([]string, 0, len(p.spec.ContextFiles)+len(p.spec.WritesTo))
+			queryFiles = append(queryFiles, p.spec.ContextFiles...)
+			queryFiles = append(queryFiles, p.spec.WritesTo...)
 			knowledgeCtx = knowledge.Inject(graph, queryFiles, modPath, knowledge.DefaultTokenBudget)
 		}
 	}

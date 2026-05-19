@@ -81,10 +81,6 @@ func TopDomain(signals []DomainSignal) string {
 	return signals[0].Domain
 }
 
-func classifyPackage(fact *PackageFact) []DomainSignal {
-	return classifyPackageWithLearned(fact, nil)
-}
-
 func classifyPackageWithLearned(fact *PackageFact, learned *LearnedDomains) []DomainSignal {
 	var signals []DomainSignal
 
