@@ -21,6 +21,7 @@ func NewKnowledgeCmd() *cobra.Command {
 	cmd.AddCommand(newKnowledgeQueryCmd())
 	cmd.AddCommand(newKnowledgeHealthCmd())
 	cmd.AddCommand(newKnowledgeUpdateCmd())
+	cmd.AddCommand(newKnowledgeDomainsCmd())
 
 	return cmd
 }
@@ -256,6 +257,47 @@ func newKnowledgeUpdateCmd() *cobra.Command {
 			if err := knowledge.Update(cwd, args); err != nil {
 				return exitError(1, "update failed: %v", err)
 			}
+
+			return nil
+		},
+	}
+}
+
+func newKnowledgeDomainsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:           "domains <file> [file...]",
+		Short:         "Infer domains from knowledge graph for given files",
+		Args:          cobra.MinimumNArgs(1),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return exitError(1, "getting working directory: %v", err)
+			}
+
+			graph, err := knowledge.Load(cwd)
+			if err != nil {
+				return exitError(1, "loading knowledge: %v (run 'baton knowledge compile' first)", err)
+			}
+
+			modPath, _ := readModPath(cwd)
+
+			signals := knowledge.InferDomains(graph, args, modPath)
+			if len(signals) == 0 {
+				fmt.Println("No domain signals found for the given files.")
+				fmt.Println("The knowledge graph may not cover these files.")
+				return nil
+			}
+
+			fmt.Printf("Domain signals for: %s\n\n", args)
+			fmt.Printf("  %-16s %6s  %s\n", "DOMAIN", "SCORE", "REASON")
+			fmt.Printf("  %-16s %6s  %s\n", "------", "-----", "------")
+			for _, s := range signals {
+				fmt.Printf("  %-16s %6.1f  %s\n", s.Domain, s.Score, s.Reason)
+			}
+
+			fmt.Printf("\nTop domain: %s\n", knowledge.TopDomain(signals))
 
 			return nil
 		},
