@@ -13,7 +13,13 @@ type DomainSignal struct {
 
 // InferDomains analyzes the knowledge graph around the given files and returns
 // ranked domain signals based on package structure, imports, types, and function names.
+// Uses static patterns + learned cache. Call LearnUnclassified after to teach unknowns to LLM.
 func InferDomains(graph *Graph, files []string, modulePath string) []DomainSignal {
+	return InferDomainsWithLearned(graph, files, modulePath, nil)
+}
+
+// InferDomainsWithLearned is like InferDomains but also checks the learned cache.
+func InferDomainsWithLearned(graph *Graph, files []string, modulePath string, learned *LearnedDomains) []DomainSignal {
 	if graph == nil || len(files) == 0 {
 		return nil
 	}
@@ -27,7 +33,7 @@ func InferDomains(graph *Graph, files []string, modulePath string) []DomainSigna
 	reasons := map[string][]string{}
 
 	for _, fact := range facts {
-		signals := classifyPackage(fact)
+		signals := classifyPackageWithLearned(fact, learned)
 		for _, s := range signals {
 			scores[s.Domain] += s.Score
 			if s.Reason != "" {
@@ -76,40 +82,91 @@ func TopDomain(signals []DomainSignal) string {
 }
 
 func classifyPackage(fact *PackageFact) []DomainSignal {
+	return classifyPackageWithLearned(fact, nil)
+}
+
+func classifyPackageWithLearned(fact *PackageFact, learned *LearnedDomains) []DomainSignal {
 	var signals []DomainSignal
 
-	// Import-based signals
 	for _, imp := range fact.Imports {
 		if d := classifyImport(imp); d != "" {
 			signals = append(signals, DomainSignal{Domain: d, Score: 1.0, Reason: "imports " + lastSegment(imp)})
+		} else if learned != nil {
+			if d := learned.ClassifyImport(imp); d != "" {
+				signals = append(signals, DomainSignal{Domain: d, Score: 0.8, Reason: "learned: " + lastSegment(imp)})
+			}
 		}
 	}
 
-	// Type-based signals
 	for _, t := range fact.Types {
 		if d := classifyType(t); d != "" {
 			signals = append(signals, DomainSignal{Domain: d, Score: 1.5, Reason: "type " + t.Name})
+		} else if learned != nil {
+			if d := learned.ClassifyType(t.Name); d != "" {
+				signals = append(signals, DomainSignal{Domain: d, Score: 1.2, Reason: "learned type: " + t.Name})
+			}
 		}
 	}
 
-	// Function-name signals
 	for _, fn := range fact.Functions {
 		if d := classifyFunction(fn); d != "" {
 			signals = append(signals, DomainSignal{Domain: d, Score: 0.5, Reason: "func " + fn.Name})
 		}
 	}
 
-	// Package path signals
 	if d := classifyPath(fact.Package); d != "" {
 		signals = append(signals, DomainSignal{Domain: d, Score: 0.8, Reason: "path " + lastSegment(fact.Package)})
 	}
 
-	// Connectivity signals (hub packages)
 	if len(fact.ImportedBy) > 5 {
 		signals = append(signals, DomainSignal{Domain: "core", Score: 1.0, Reason: "high fan-in"})
 	}
 
 	return signals
+}
+
+// CollectUnclassified returns imports and type names that neither static patterns
+// nor learned cache could classify.
+func CollectUnclassified(graph *Graph, files []string, modulePath string, learned *LearnedDomains) (unknownImports []string, unknownTypes []string) {
+	if graph == nil {
+		return nil, nil
+	}
+
+	facts := graph.Query(files, modulePath, 2)
+	seenImports := map[string]bool{}
+	seenTypes := map[string]bool{}
+
+	for _, fact := range facts {
+		for _, imp := range fact.Imports {
+			if seenImports[imp] {
+				continue
+			}
+			seenImports[imp] = true
+			if classifyImport(imp) != "" {
+				continue
+			}
+			if learned != nil && learned.ClassifyImport(imp) != "" {
+				continue
+			}
+			unknownImports = append(unknownImports, imp)
+		}
+
+		for _, t := range fact.Types {
+			if seenTypes[t.Name] {
+				continue
+			}
+			seenTypes[t.Name] = true
+			if classifyType(t) != "" {
+				continue
+			}
+			if learned != nil && learned.ClassifyType(t.Name) != "" {
+				continue
+			}
+			unknownTypes = append(unknownTypes, t.Name)
+		}
+	}
+
+	return unknownImports, unknownTypes
 }
 
 func classifyImport(imp string) string {

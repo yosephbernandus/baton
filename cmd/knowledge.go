@@ -264,7 +264,9 @@ func newKnowledgeUpdateCmd() *cobra.Command {
 }
 
 func newKnowledgeDomainsCmd() *cobra.Command {
-	return &cobra.Command{
+	var learn bool
+
+	cmd := &cobra.Command{
 		Use:           "domains <file> [file...]",
 		Short:         "Infer domains from knowledge graph for given files",
 		Args:          cobra.MinimumNArgs(1),
@@ -282,8 +284,9 @@ func newKnowledgeDomainsCmd() *cobra.Command {
 			}
 
 			modPath, _ := readModPath(cwd)
+			learned := knowledge.LoadLearnedDomains(cwd)
 
-			signals := knowledge.InferDomains(graph, args, modPath)
+			signals := knowledge.InferDomainsWithLearned(graph, args, modPath, learned)
 			if len(signals) == 0 {
 				fmt.Println("No domain signals found for the given files.")
 				fmt.Println("The knowledge graph may not cover these files.")
@@ -296,12 +299,69 @@ func newKnowledgeDomainsCmd() *cobra.Command {
 			for _, s := range signals {
 				fmt.Printf("  %-16s %6.1f  %s\n", s.Domain, s.Score, s.Reason)
 			}
-
 			fmt.Printf("\nTop domain: %s\n", knowledge.TopDomain(signals))
+
+			// Show unclassified
+			unknownImports, unknownTypes := knowledge.CollectUnclassified(graph, args, modPath, learned)
+			if len(unknownImports) > 0 || len(unknownTypes) > 0 {
+				fmt.Printf("\nUnclassified (%d imports, %d types):\n", len(unknownImports), len(unknownTypes))
+				for _, imp := range unknownImports {
+					fmt.Printf("  import: %s\n", imp)
+				}
+				for _, t := range unknownTypes {
+					fmt.Printf("  type:   %s\n", t)
+				}
+
+				if learn {
+					fmt.Println("\nLearning from LLM...")
+					cfg, err := config.LoadConfig()
+					if err != nil {
+						return exitError(2, "loading config for LLM: %v", err)
+					}
+					runtime := cfg.Orchestrator.Runtime
+					if runtime == "" {
+						runtime = cfg.Defaults.Runtime
+					}
+					model := cfg.Orchestrator.Model
+					if model == "" {
+						model = cfg.Defaults.Model
+					}
+					if runtime == "" {
+						fmt.Println("  No runtime configured. Set orchestrator.runtime in agents.yaml.")
+						return nil
+					}
+
+					newLearned, err := knowledge.LearnFromLLM(cwd, unknownImports, unknownTypes, cfg, runtime, model)
+					if err != nil {
+						fmt.Printf("  LLM learning failed: %v\n", err)
+						return nil
+					}
+
+					// Merge and save
+					for k, v := range newLearned.Imports {
+						learned.Imports[k] = v
+					}
+					for k, v := range newLearned.Types {
+						learned.Types[k] = v
+					}
+					if err := knowledge.SaveLearnedDomains(cwd, learned); err != nil {
+						fmt.Printf("  Saving learned domains: %v\n", err)
+						return nil
+					}
+
+					fmt.Printf("  Learned %d imports, %d types\n", len(newLearned.Imports), len(newLearned.Types))
+					fmt.Println("  Saved to .baton/knowledge/learned-domains.yaml + ~/.baton/learned-domains.yaml")
+				} else {
+					fmt.Println("\nRun with --learn to classify unknowns via LLM.")
+				}
+			}
 
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&learn, "learn", false, "Use LLM to classify unknown imports/types and save to cache")
+	return cmd
 }
 
 func readModPath(dir string) (string, error) {
