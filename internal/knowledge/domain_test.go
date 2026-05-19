@@ -92,6 +92,7 @@ func TestClassifyImport(t *testing.T) {
 		imp    string
 		domain string
 	}{
+		// Go
 		{"net/http", "api"},
 		{"database/sql", "database"},
 		{"crypto/bcrypt", "security"},
@@ -100,6 +101,40 @@ func TestClassifyImport(t *testing.T) {
 		{"github.com/jmoiron/sqlx", "database"},
 		{"encoding/json", "serialization"},
 		{"os/exec", "system"},
+		// Python
+		{"flask", "api"},
+		{"fastapi", "api"},
+		{"django", "api"},
+		{"sqlalchemy", "database"},
+		{"psycopg", "database"},
+		{"pytest", "testing"},
+		{"asyncio", "concurrency"},
+		{"boto3", "infra"},
+		{"numpy", "ml"},
+		{"pandas", "ml"},
+		{"torch", "ml"},
+		{"langchain", "ml"},
+		// TypeScript/JavaScript
+		{"express", "api"},
+		{"@nestjs/core", "api"},
+		{"prisma", "database"},
+		{"sequelize", "database"},
+		{"drizzle", "database"},
+		{"jest", "testing"},
+		{"vitest", "testing"},
+		{"react", "frontend"},
+		{"vue", "frontend"},
+		{"next", "frontend"},
+		{"zod", "serialization"},
+		{"winston", "observability"},
+		// Rust
+		{"axum", "api"},
+		{"actix", "api"},
+		{"diesel", "database"},
+		{"tokio", "concurrency"},
+		{"serde", "serialization"},
+		{"clap", "cli"},
+		// Unknown
 		{"unknown/package", ""},
 	}
 

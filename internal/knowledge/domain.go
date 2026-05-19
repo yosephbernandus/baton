@@ -118,6 +118,7 @@ func classifyImport(imp string) string {
 		match  string
 		domain string
 	}{
+		// API / Web frameworks (Go, Python, JS/TS, Rust, Ruby, Java)
 		{"net/http", "api"},
 		{"http", "api"},
 		{"gin", "api"},
@@ -128,7 +129,24 @@ func classifyImport(imp string) string {
 		{"grpc", "api"},
 		{"graphql", "api"},
 		{"rest", "api"},
+		{"flask", "api"},
+		{"django", "api"},
+		{"fastapi", "api"},
+		{"starlette", "api"},
+		{"sanic", "api"},
+		{"express", "api"},
+		{"koa", "api"},
+		{"nestjs", "api"},
+		{"hono", "api"},
+		{"axum", "api"},
+		{"actix", "api"},
+		{"warp", "api"},
+		{"rocket", "api"},
+		{"rails", "api"},
+		{"sinatra", "api"},
+		{"spring", "api"},
 
+		// Database / ORM (multi-language)
 		{"database/sql", "database"},
 		{"gorm", "database"},
 		{"sqlx", "database"},
@@ -141,33 +159,67 @@ func classifyImport(imp string) string {
 		{"typeorm", "database"},
 		{"sequelize", "database"},
 		{"knex", "database"},
+		{"drizzle", "database"},
+		{"peewee", "database"},
+		{"tortoise", "database"},
+		{"diesel", "database"},
+		{"sea-orm", "database"},
+		{"activerecord", "database"},
+		{"mongoose", "database"},
+		{"psycopg", "database"},
+		{"hibernate", "database"},
+		{"mybatis", "database"},
 
+		// Security / Auth
 		{"crypto", "security"},
 		{"oauth", "security"},
 		{"jwt", "security"},
 		{"bcrypt", "security"},
 		{"auth", "security"},
 		{"saml", "security"},
+		{"passport", "security"},
+		{"argon2", "security"},
+		{"hashlib", "security"},
 
+		// Testing (multi-language)
 		{"testing", "testing"},
 		{"testify", "testing"},
 		{"jest", "testing"},
 		{"pytest", "testing"},
 		{"mocha", "testing"},
+		{"vitest", "testing"},
+		{"unittest", "testing"},
+		{"rspec", "testing"},
+		{"minitest", "testing"},
+		{"junit", "testing"},
+		{"playwright", "testing"},
+		{"cypress", "testing"},
+		{"selenium", "testing"},
 
+		// Frontend (JS/TS)
 		{"react", "frontend"},
 		{"vue", "frontend"},
 		{"angular", "frontend"},
 		{"svelte", "frontend"},
 		{"next", "frontend"},
+		{"nuxt", "frontend"},
+		{"remix", "frontend"},
 		{"html/template", "frontend"},
+		{"tailwind", "frontend"},
+		{"styled-components", "frontend"},
+		{"emotion", "frontend"},
 
+		// CLI
 		{"cobra", "cli"},
 		{"flag", "cli"},
 		{"argparse", "cli"},
 		{"click", "cli"},
 		{"commander", "cli"},
+		{"clap", "cli"},
+		{"typer", "cli"},
+		{"oclif", "cli"},
 
+		// Infrastructure / Cloud
 		{"terraform", "infra"},
 		{"pulumi", "infra"},
 		{"aws-sdk", "infra"},
@@ -175,29 +227,62 @@ func classifyImport(imp string) string {
 		{"azure", "infra"},
 		{"docker", "infra"},
 		{"kubernetes", "infra"},
+		{"boto3", "infra"},
+		{"@aws-sdk", "infra"},
 
+		// Serialization
 		{"encoding/json", "serialization"},
 		{"protobuf", "serialization"},
 		{"yaml", "serialization"},
 		{"msgpack", "serialization"},
+		{"pydantic", "serialization"},
+		{"serde", "serialization"},
+		{"marshmallow", "serialization"},
+		{"zod", "serialization"},
 
+		// Concurrency / Async
 		{"sync", "concurrency"},
 		{"context", "concurrency"},
 		{"channel", "concurrency"},
 		{"goroutine", "concurrency"},
 		{"asyncio", "concurrency"},
+		{"tokio", "concurrency"},
+		{"rayon", "concurrency"},
+		{"celery", "concurrency"},
+		{"bullmq", "concurrency"},
 
+		// Observability / Logging
 		{"log", "observability"},
 		{"zap", "observability"},
 		{"slog", "observability"},
 		{"prometheus", "observability"},
 		{"opentelemetry", "observability"},
 		{"datadog", "observability"},
+		{"logging", "observability"},
+		{"loguru", "observability"},
+		{"winston", "observability"},
+		{"pino", "observability"},
+		{"tracing", "observability"},
+		{"sentry", "observability"},
 
+		// System / OS
 		{"os/exec", "system"},
 		{"syscall", "system"},
 		{"os", "system"},
 		{"subprocess", "system"},
+		{"child_process", "system"},
+		{"std::process", "system"},
+
+		// ML / Data
+		{"numpy", "ml"},
+		{"pandas", "ml"},
+		{"torch", "ml"},
+		{"tensorflow", "ml"},
+		{"sklearn", "ml"},
+		{"transformers", "ml"},
+		{"langchain", "ml"},
+		{"openai", "ml"},
+		{"anthropic", "ml"},
 	}
 
 	for _, p := range patterns {
