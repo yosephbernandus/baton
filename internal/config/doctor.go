@@ -83,10 +83,12 @@ func (c *Config) ProbeRuntime(ctx context.Context, name string) ProbeResult {
 
 	probePrompt := "respond with exactly: BATON_PROBE_OK"
 
+	stdinMode := rt.PromptMode == "stdin"
+
 	var args []string
 	for _, p := range rt.Positional {
 		if p == "{{prompt}}" {
-			if rt.PromptMode != "stdin" {
+			if !stdinMode {
 				args = append(args, probePrompt)
 			}
 		} else {
@@ -96,7 +98,8 @@ func (c *Config) ProbeRuntime(ctx context.Context, name string) ProbeResult {
 	if rt.ModelFlag != "" && len(rt.Models) > 0 {
 		args = append(args, rt.ModelFlag, rt.Models[0])
 	}
-	if rt.PromptFlag != "" && rt.PromptMode != "stdin" {
+	args = append(args, rt.ExtraFlags...)
+	if rt.PromptFlag != "" && !stdinMode {
 		args = append(args, rt.PromptFlag, probePrompt)
 	}
 
@@ -104,7 +107,7 @@ func (c *Config) ProbeRuntime(ctx context.Context, name string) ProbeResult {
 	defer cancel()
 
 	cmd := exec.CommandContext(probeCtx, rt.Command, args...)
-	if rt.PromptMode == "stdin" {
+	if stdinMode {
 		cmd.Stdin = strings.NewReader(probePrompt)
 	}
 
@@ -126,7 +129,9 @@ func (c *Config) ProbeRuntime(ctx context.Context, name string) ProbeResult {
 		}
 	}
 
-	if !strings.Contains(result.Output, "BATON_PROBE_OK") {
+	// Check for probe marker — also accept variations LLMs commonly produce
+	output := strings.ToUpper(result.Output)
+	if !strings.Contains(output, "BATON_PROBE_OK") {
 		result.Error = fmt.Sprintf("probe response missing BATON_PROBE_OK (exit %d)", result.ExitCode)
 	}
 
