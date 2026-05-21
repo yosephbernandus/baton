@@ -54,9 +54,11 @@ type Pipeline struct {
 	manifest        *session.Manifest
 	manifestPath    string
 	advisor         *advisor.Advisor
-	resumeFromPhase int
-	resumeBriefing  string
-	lastPhaseNotes  []string
+	resumeFromPhase  int
+	resumeBriefing   string
+	lastPhaseNotes   []string
+	lastPhaseErrors  []string
+	completedRecords []session.PhaseRecord
 }
 
 func NewPipeline(cfg *config.Config, r PhaseRunner, store *task.Store,
@@ -82,9 +84,14 @@ func (p *Pipeline) SetAdvisor(a *advisor.Advisor) {
 	p.advisor = a
 }
 
-func (p *Pipeline) SetResume(fromPhase int, briefing string) {
+func (p *Pipeline) SetResume(fromPhase int, briefing string, records []session.PhaseRecord) {
 	p.resumeFromPhase = fromPhase
 	p.resumeBriefing = briefing
+	for _, r := range records {
+		if r.Status == "completed" {
+			p.completedRecords = append(p.completedRecords, r)
+		}
+	}
 }
 
 func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
@@ -114,7 +121,6 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 		basePrompt += "\n[DOMAIN CONTEXT]\n" + skillContext + "\n"
 	}
 
-	prevOutputs := make(map[int]string)
 	l2Cycles := 0
 	if p.manifest != nil {
 		l2Cycles = p.manifest.Budget.L2CyclesTotal
@@ -152,24 +158,26 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 
 		phaseStart := time.Now()
 		phaseOutcome, failReason := p.executePhaseWithRetries(
-			ctx, ph, phasePromptBase, totalPhases, prevOutputs, maxRetries, result)
+			ctx, ph, phasePromptBase, totalPhases, maxRetries, result)
 
 		phaseDuration := time.Since(phaseStart)
 
 		switch phaseOutcome {
 		case outcomeCompleted:
+			rec := session.PhaseRecord{
+				ID:           ph.ID,
+				Name:         ph.Name,
+				Status:       "completed",
+				Notes:        p.lastPhaseNotes,
+				Errors:       p.lastPhaseErrors,
+				FilesChanged: result.DirtyFiles[ph.ID],
+				Attempts:     result.AttemptsByPhase[ph.ID],
+				Duration:     phaseDuration.Round(time.Second).String(),
+				CompletedAt:  time.Now(),
+			}
+			p.completedRecords = append(p.completedRecords, rec)
 			if p.manifest != nil {
 				p.manifest.AdvancePhase(ph.ID)
-				rec := session.PhaseRecord{
-					ID:           ph.ID,
-					Name:         ph.Name,
-					Status:       "completed",
-					Notes:        p.lastPhaseNotes,
-					FilesChanged: result.DirtyFiles[ph.ID],
-					Attempts:     result.AttemptsByPhase[ph.ID],
-					Duration:     phaseDuration.Round(time.Second).String(),
-					CompletedAt:  time.Now(),
-				}
 				p.manifest.AddPhaseRecord(rec)
 				if files := result.DirtyFiles[ph.ID]; len(files) > 0 {
 					p.manifest.AddPipelineFiles(files)
@@ -323,7 +331,6 @@ func (p *Pipeline) executePhaseWithRetries(
 	ph Phase,
 	basePrompt string,
 	totalPhases int,
-	prevOutputs map[int]string,
 	maxRetries int,
 	result *PipelineResult,
 ) (phaseOutcome, string) {
@@ -351,7 +358,7 @@ func (p *Pipeline) executePhaseWithRetries(
 		}
 
 		scratchpadContent := scratchpad.ForPrompt()
-		phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, prevOutputs, scratchpadContent, result.DirtyFiles)
+		phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, p.completedRecords, scratchpadContent, result.DirtyFiles)
 		phasePrompt = spec.BuildPromptWithProtocol(phasePrompt, taskID, p.cfg.TaskDir)
 
 		liveness := p.buildLiveness()
@@ -424,13 +431,13 @@ func (p *Pipeline) executePhaseWithRetries(
 				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_boundary_violation")
 				continue
 			}
-			prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
 			if len(runResult.FilesChanged) > 0 {
 				result.DirtyFiles[ph.ID] = runResult.FilesChanged
 			}
 			result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
 			result.AttemptsByPhase[ph.ID] = attempt
 			p.lastPhaseNotes = extractNotes(runResult.Output)
+			p.lastPhaseErrors = extractErrors(runResult.Output)
 			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
 			return outcomeCompleted, ""
 
@@ -472,13 +479,13 @@ func (p *Pipeline) executePhaseWithRetries(
 					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_boundary_violation")
 					continue
 				}
-				prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
 				if len(runResult.FilesChanged) > 0 {
 					result.DirtyFiles[ph.ID] = runResult.FilesChanged
 				}
 				result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
 				result.AttemptsByPhase[ph.ID] = attempt
 				p.lastPhaseNotes = extractNotes(runResult.Output)
+				p.lastPhaseErrors = extractErrors(runResult.Output)
 				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
 				return outcomeCompleted, ""
 			}
@@ -511,7 +518,7 @@ func (p *Pipeline) executePhaseWithRetries(
 			}, "advisor suggested retry with hint")
 
 			scratchpadContent := scratchpad.ForPrompt()
-			phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, prevOutputs, scratchpadContent, result.DirtyFiles)
+			phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, p.completedRecords, scratchpadContent, result.DirtyFiles)
 			phasePrompt = spec.BuildPromptWithProtocol(phasePrompt, taskID, p.cfg.TaskDir)
 			liveness := p.buildLiveness()
 
@@ -520,12 +527,13 @@ func (p *Pipeline) executePhaseWithRetries(
 			if err == nil {
 				completion := extractCompletion(runResult.Output, ph.CompletionSignal)
 				if completion.Status == "done" || runResult.Status == "completed" {
-					prevOutputs[ph.ID] = lastNLines(runResult.Output, 20)
 					if len(runResult.FilesChanged) > 0 {
 						result.DirtyFiles[ph.ID] = runResult.FilesChanged
 					}
 					result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
 					result.AttemptsByPhase[ph.ID] = totalAttempts + 1
+					p.lastPhaseNotes = extractNotes(runResult.Output)
+					p.lastPhaseErrors = extractErrors(runResult.Output)
 					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
 					return outcomeCompleted, ""
 				}
@@ -798,6 +806,17 @@ func extractNotes(output []string) []string {
 		}
 	}
 	return notes
+}
+
+func extractErrors(output []string) []string {
+	var errs []string
+	for _, line := range output {
+		mk, ok := proto.ParseMarker(line)
+		if ok && mk.Type == proto.MarkerError {
+			errs = append(errs, mk.Msg)
+		}
+	}
+	return errs
 }
 
 func countHeartbeats(output []string) int {

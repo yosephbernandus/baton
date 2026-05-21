@@ -32,6 +32,7 @@ type PhaseRecord struct {
 	Name         string    `yaml:"name"`
 	Status       string    `yaml:"status"`
 	Notes        []string  `yaml:"notes,omitempty"`
+	Errors       []string  `yaml:"errors,omitempty"`
 	FilesChanged []string  `yaml:"files_changed,omitempty"`
 	Attempts     int       `yaml:"attempts"`
 	Duration     string    `yaml:"duration,omitempty"`

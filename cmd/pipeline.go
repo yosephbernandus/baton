@@ -138,7 +138,7 @@ func newPipelineRunCmd() *cobra.Command {
 						manifest.RemainingL2Cycles(maxL2),
 					)
 
-					p.SetResume(decision.StartPhase, briefing)
+					p.SetResume(decision.StartPhase, briefing, manifest.PhaseRecords)
 					resuming = true
 					fmt.Fprintf(os.Stderr, "Auto-resume: %s\n", decision.Reason)
 

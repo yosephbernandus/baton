@@ -35,7 +35,7 @@ var roleDescriptions = map[string]string{
 	RoleTester:    "You are the TESTER. You write and run tests. You MUST NOT modify production code, only test files.",
 }
 
-func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhases int, prevOutputs map[int]string, scratchpadContent string, dirtyFiles ...map[int][]string) string {
+func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhases int, records []session.PhaseRecord, scratchpadContent string, dirtyFiles ...map[int][]string) string {
 	var b strings.Builder
 
 	b.WriteString(basePrompt)
@@ -58,10 +58,16 @@ func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhase
 		fmt.Fprintf(&b, "Objective: %s\n\n", desc)
 	}
 
-	if len(prevOutputs) > 0 {
-		b.WriteString("[PREVIOUS PHASE OUTPUTS]\n")
-		for id, output := range prevOutputs {
-			fmt.Fprintf(&b, "- Phase %d: %s\n", id, truncate(output, 500))
+	if len(records) > 0 {
+		b.WriteString("[PRIOR PHASE CONTEXT]\n")
+		for _, r := range records {
+			detail := buildRecordDetail(r)
+			fmt.Fprintf(&b, "- Phase %d (%s): %s\n", r.ID, r.Name, detail)
+			if len(r.Errors) > 0 {
+				for _, e := range r.Errors {
+					fmt.Fprintf(&b, "  error: %s\n", truncate(e, 200))
+				}
+			}
 		}
 		b.WriteString("\n")
 	}
@@ -147,16 +153,27 @@ func BuildResumeBriefing(records []session.PhaseRecord, interruptedPhase int, in
 func PhaseDescription(name string) string { return phaseDescriptions[name] }
 func RoleDescription(role string) string  { return roleDescriptions[role] }
 
+func buildRecordDetail(r session.PhaseRecord) string {
+	var parts []string
+	if len(r.Notes) > 0 {
+		parts = append(parts, strings.Join(r.Notes, "; "))
+	}
+	if len(r.FilesChanged) > 0 {
+		parts = append(parts, "modified "+strings.Join(r.FilesChanged, ", "))
+	}
+	if len(parts) == 0 {
+		parts = append(parts, r.Status)
+	}
+	detail := strings.Join(parts, " | ")
+	if r.Attempts > 1 {
+		detail += fmt.Sprintf(" (%d attempts)", r.Attempts)
+	}
+	return detail
+}
+
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
 	return s[:maxLen] + "..."
-}
-
-func lastNLines(lines []string, n int) string {
-	if len(lines) <= n {
-		return strings.Join(lines, "\n")
-	}
-	return strings.Join(lines[len(lines)-n:], "\n")
 }

@@ -1538,7 +1538,7 @@ Per-spec session files at `.baton/sessions/<specID>.yaml` track pipeline state. 
 
 If any check fails → fresh run with log message. All automatic, zero user intervention.
 
-**Phase records:** Each completed phase writes a structured record (notes from `BATON:N:` markers, files changed, attempts, duration). On resume, these records are assembled into a reasoning briefing injected into the prompt — giving the LLM a mental model of what prior phases decided, not raw output.
+**Phase records:** Each completed phase writes a structured record (notes from `BATON:N:` markers, errors from `BATON:E:` markers, files changed, attempts, duration). Phase records are the single source of inter-phase context for both fresh runs and resume — replacing the earlier `prevOutputs` raw-output-tail approach. A zero-notes fallback auto-generates context from `files_changed` and `attempts` when workers write no `BATON:N` markers. On resume, records are assembled into a reasoning briefing giving the LLM a mental model of what prior phases decided.
 
 **Rate limit detection:** Runner detects rate limit patterns in worker output (configurable per runtime). Rate-limited phases save session state without burning L1 retry budget. Pipeline exits cleanly for later resumption.
 

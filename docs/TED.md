@@ -577,6 +577,7 @@ type PhaseRecord struct {
     ID           int
     Name, Status string            // completed, failed, stuck, rate_limited, interrupted
     Notes        []string           // from BATON:N markers
+    Errors       []string           // from BATON:E markers
     FilesChanged []string
     Attempts     int
     Duration     string
