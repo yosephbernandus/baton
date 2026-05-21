@@ -65,6 +65,12 @@ type RuntimeConfig struct {
 	Models          []string         `yaml:"models"`
 	ToolRestriction *ToolRestriction `yaml:"tool_restriction,omitempty"`
 	PromptMode      string           `yaml:"prompt_mode,omitempty"` // "stdin" to pipe prompt via stdin instead of CLI arg
+	RateLimit       *RateLimitConfig `yaml:"rate_limit,omitempty"`
+}
+
+type RateLimitConfig struct {
+	Patterns  []string `yaml:"patterns"`
+	ExitCodes []int    `yaml:"exit_codes"`
 }
 
 type ToolRestriction struct {

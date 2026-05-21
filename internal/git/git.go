@@ -1,6 +1,7 @@
 package git
 
 import (
+	"fmt"
 	"os/exec"
 	"strings"
 )
@@ -77,6 +78,27 @@ func diffNameOnly() ([]string, error) {
 
 func untrackedFiles() ([]string, error) {
 	cmd := exec.Command("git", "ls-files", "--others", "--exclude-standard")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return splitLines(string(out)), nil
+}
+
+func HeadHash() (string, error) {
+	if !IsRepo() {
+		return "", fmt.Errorf("not a git repository")
+	}
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func DiffBetween(fromHash, toHash string) ([]string, error) {
+	cmd := exec.Command("git", "diff", "--name-only", fromHash, toHash)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err

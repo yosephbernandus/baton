@@ -43,17 +43,20 @@ type PipelineResult struct {
 }
 
 type Pipeline struct {
-	config       PipelineConfig
-	phases       []Phase
-	runner       PhaseRunner
-	cfg          *config.Config
-	spec         *spec.Spec
-	store        *task.Store
-	emitter      *events.Emitter
-	specID       string
-	manifest     *session.Manifest
-	manifestPath string
-	advisor      *advisor.Advisor
+	config          PipelineConfig
+	phases          []Phase
+	runner          PhaseRunner
+	cfg             *config.Config
+	spec            *spec.Spec
+	store           *task.Store
+	emitter         *events.Emitter
+	specID          string
+	manifest        *session.Manifest
+	manifestPath    string
+	advisor         *advisor.Advisor
+	resumeFromPhase int
+	resumeBriefing  string
+	lastPhaseNotes  []string
 }
 
 func NewPipeline(cfg *config.Config, r PhaseRunner, store *task.Store,
@@ -77,6 +80,11 @@ func (p *Pipeline) SetManifest(m *session.Manifest, path string) {
 
 func (p *Pipeline) SetAdvisor(a *advisor.Advisor) {
 	p.advisor = a
+}
+
+func (p *Pipeline) SetResume(fromPhase int, briefing string) {
+	p.resumeFromPhase = fromPhase
+	p.resumeBriefing = briefing
 }
 
 func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
@@ -108,8 +116,22 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 
 	prevOutputs := make(map[int]string)
 	l2Cycles := 0
+	if p.manifest != nil {
+		l2Cycles = p.manifest.Budget.L2CyclesTotal
+	}
 
-	i := 0
+	startIdx := 0
+	if p.resumeFromPhase > 0 {
+		for j, ap := range active {
+			if ap.ID > p.resumeFromPhase {
+				startIdx = j
+				break
+			}
+		}
+	}
+
+	i := startIdx
+	resumeBriefingUsed := false
 	for i < len(active) {
 		ph := active[i]
 
@@ -122,13 +144,36 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 		default:
 		}
 
+		phasePromptBase := basePrompt
+		if p.resumeBriefing != "" && !resumeBriefingUsed {
+			phasePromptBase = basePrompt + "\n" + p.resumeBriefing + "\n"
+			resumeBriefingUsed = true
+		}
+
+		phaseStart := time.Now()
 		phaseOutcome, failReason := p.executePhaseWithRetries(
-			ctx, ph, basePrompt, totalPhases, prevOutputs, maxRetries, result)
+			ctx, ph, phasePromptBase, totalPhases, prevOutputs, maxRetries, result)
+
+		phaseDuration := time.Since(phaseStart)
 
 		switch phaseOutcome {
 		case outcomeCompleted:
 			if p.manifest != nil {
 				p.manifest.AdvancePhase(ph.ID)
+				rec := session.PhaseRecord{
+					ID:           ph.ID,
+					Name:         ph.Name,
+					Status:       "completed",
+					Notes:        p.lastPhaseNotes,
+					FilesChanged: result.DirtyFiles[ph.ID],
+					Attempts:     result.AttemptsByPhase[ph.ID],
+					Duration:     phaseDuration.Round(time.Second).String(),
+					CompletedAt:  time.Now(),
+				}
+				p.manifest.AddPhaseRecord(rec)
+				if files := result.DirtyFiles[ph.ID]; len(files) > 0 {
+					p.manifest.AddPipelineFiles(files)
+				}
 				p.saveManifest()
 			}
 			i++
@@ -234,6 +279,25 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 			result.Duration = time.Since(start)
 			p.saveManifestStatus("failed")
 			return result, nil
+
+		case outcomeRateLimited:
+			if p.manifest != nil {
+				rec := session.PhaseRecord{
+					ID:         ph.ID,
+					Name:       ph.Name,
+					Status:     "rate_limited",
+					Attempts:   result.AttemptsByPhase[ph.ID],
+					FailReason: failReason,
+				}
+				p.manifest.AddPhaseRecord(rec)
+				p.manifest.MarkRateLimited(failReason)
+				p.saveManifest()
+			}
+			result.Status = "rate_limited"
+			result.FailedPhase = intPtr(ph.ID)
+			result.FailReason = failReason
+			result.Duration = time.Since(start)
+			return result, nil
 		}
 	}
 
@@ -251,6 +315,7 @@ const (
 	outcomeBlocked
 	outcomeCancelled
 	outcomeStuck
+	outcomeRateLimited
 )
 
 func (p *Pipeline) executePhaseWithRetries(
@@ -326,6 +391,12 @@ func (p *Pipeline) executePhaseWithRetries(
 			continue
 		}
 
+		if runResult.Status == "rate_limited" {
+			result.AttemptsByPhase[ph.ID] = attempt
+			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_rate_limited")
+			return outcomeRateLimited, fmt.Sprintf("phase %d (%s): rate limited", ph.ID, ph.Name)
+		}
+
 		// Heartbeat budget check
 		if budget := p.cfg.PhaseMachine.HeartbeatBudget; budget > 0 {
 			hbCount := countHeartbeats(runResult.Output)
@@ -359,6 +430,7 @@ func (p *Pipeline) executePhaseWithRetries(
 			}
 			result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
 			result.AttemptsByPhase[ph.ID] = attempt
+			p.lastPhaseNotes = extractNotes(runResult.Output)
 			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
 			return outcomeCompleted, ""
 
@@ -406,6 +478,7 @@ func (p *Pipeline) executePhaseWithRetries(
 				}
 				result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
 				result.AttemptsByPhase[ph.ID] = attempt
+				p.lastPhaseNotes = extractNotes(runResult.Output)
 				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
 				return outcomeCompleted, ""
 			}

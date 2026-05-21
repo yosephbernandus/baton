@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/yosephbernandus/baton/internal/config"
 	"github.com/yosephbernandus/baton/internal/events"
+	gitpkg "github.com/yosephbernandus/baton/internal/git"
 	"github.com/yosephbernandus/baton/internal/phase"
 	"github.com/yosephbernandus/baton/internal/runner"
 	"github.com/yosephbernandus/baton/internal/session"
@@ -33,6 +34,7 @@ func NewPipelineCmd() *cobra.Command {
 func newPipelineRunCmd() *cobra.Command {
 	var (
 		complexityFlag string
+		freshFlag      bool
 	)
 
 	cmd := &cobra.Command{
@@ -77,24 +79,95 @@ func newPipelineRunCmd() *cobra.Command {
 			r := runner.New(cfg, emitter, store)
 
 			specID := strings.TrimSuffix(filepath.Base(specPath), filepath.Ext(specPath))
-
-			p := phase.NewPipeline(cfg, r, store, emitter, s, specID, phase.PipelineConfig{
-				Complexity: complexity,
-			})
-
-			manifestPath := filepath.Join(".baton", "session.yaml")
-			sessionID := fmt.Sprintf("%s-%d", specID, time.Now().Unix())
-			manifest := session.New(sessionID, specPath, complexity)
-			p.SetManifest(manifest, manifestPath)
-
-			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-			defer cancel()
+			sessionPath := session.SessionPath(specID)
 
 			allPhases := phase.DefaultPhases()
 			active := phase.ActivePhases(allPhases, complexity)
 			skipped := phase.SkippedPhaseIDs(allPhases, complexity)
 
-			fmt.Fprintf(os.Stderr, "Pipeline: %s (complexity: %s)\n", specID, complexity)
+			p := phase.NewPipeline(cfg, r, store, emitter, s, specID, phase.PipelineConfig{
+				Complexity: complexity,
+			})
+
+			var manifest *session.Manifest
+			resuming := false
+
+			if !freshFlag {
+				decision, existing := session.CheckResumable(sessionPath, s)
+				switch decision.Action {
+				case "resume":
+					manifest = existing
+					manifest.Status = "running"
+					manifest.ResumeCount++
+
+					nextPhaseID := findNextPhaseID(active, manifest.LastCompletedPhase())
+					if manifest.PhaseResumeAttempts == nil {
+						manifest.PhaseResumeAttempts = make(map[int]int)
+					}
+					manifest.PhaseResumeAttempts[nextPhaseID]++
+
+					maxRetries := cfg.PhaseMachine.MaxL1Retries
+					if maxRetries == 0 {
+						maxRetries = 2
+					}
+					maxL2 := cfg.PhaseMachine.MaxL2Cycles
+					if maxL2 == 0 {
+						maxL2 = 3
+					}
+
+					interruptedName := ""
+					interruptReason := "interrupted"
+					for _, rec := range manifest.PhaseRecords {
+						if rec.Status != "completed" {
+							interruptedName = rec.Name
+							interruptReason = rec.FailReason
+							if interruptReason == "" {
+								interruptReason = rec.Status
+							}
+							break
+						}
+					}
+
+					briefing := phase.BuildResumeBriefing(
+						manifest.PhaseRecords,
+						nextPhaseID,
+						interruptedName,
+						interruptReason,
+						manifest.PipelineFiles,
+						manifest.RemainingL1Retries(maxRetries+1),
+						manifest.RemainingL2Cycles(maxL2),
+					)
+
+					p.SetResume(decision.StartPhase, briefing)
+					resuming = true
+					fmt.Fprintf(os.Stderr, "Auto-resume: %s\n", decision.Reason)
+
+				case "error":
+					return exitError(1, "%s", decision.Reason)
+
+				case "fresh":
+					fmt.Fprintf(os.Stderr, "Fresh run: %s\n", decision.Reason)
+				}
+			}
+
+			if manifest == nil {
+				sessionID := fmt.Sprintf("%s-%d", specID, time.Now().Unix())
+				manifest = session.New(sessionID, specPath, complexity)
+				manifest.SpecCoreHash = session.SpecCoreHash(s)
+				if head, err := gitpkg.HeadHash(); err == nil {
+					manifest.GitHead = head
+				}
+			}
+			p.SetManifest(manifest, sessionPath)
+
+			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+			defer cancel()
+
+			if resuming {
+				fmt.Fprintf(os.Stderr, "Pipeline: %s (complexity: %s) [RESUMING from phase %d]\n", specID, complexity, manifest.LastCompletedPhase())
+			} else {
+				fmt.Fprintf(os.Stderr, "Pipeline: %s (complexity: %s)\n", specID, complexity)
+			}
 			fmt.Fprintf(os.Stderr, "Phases: %d active, %d skipped\n", len(active), len(skipped))
 			fmt.Fprintf(os.Stderr, "Active: %s\n\n", phaseNames(active))
 
@@ -135,6 +208,9 @@ func newPipelineRunCmd() *cobra.Command {
 				return nil
 			case "blocked":
 				return exitError(10, "pipeline blocked: %s", result.FailReason)
+			case "rate_limited":
+				fmt.Fprintf(os.Stderr, "\nSession saved. Re-run to auto-resume: baton pipeline run %s\n", specPath)
+				return exitError(11, "pipeline rate limited: %s", result.FailReason)
 			default:
 				return exitError(1, "pipeline failed: %s", result.FailReason)
 			}
@@ -142,20 +218,97 @@ func newPipelineRunCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&complexityFlag, "complexity", "", "Override task complexity (TRIVIAL|SMALL|MEDIUM|LARGE)")
+	cmd.Flags().BoolVar(&freshFlag, "fresh", false, "Force a fresh run, ignoring any existing session")
 
 	return cmd
 }
 
+func findNextPhaseID(active []phase.Phase, lastCompleted int) int {
+	for _, p := range active {
+		if p.ID > lastCompleted {
+			return p.ID
+		}
+	}
+	return 0
+}
+
 func newPipelineStatusCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:           "status",
-		Short:         "Show current pipeline status",
+		Use:           "status [spec.yaml]",
+		Short:         "Show pipeline session status",
+		Args:          cobra.MaximumNArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("No active pipeline.")
+			if len(args) == 0 {
+				return listSessions()
+			}
+			specPath := args[0]
+			specID := strings.TrimSuffix(filepath.Base(specPath), filepath.Ext(specPath))
+			sessionPath := session.SessionPath(specID)
+
+			m, err := session.Load(sessionPath)
+			if err != nil {
+				fmt.Println("No session found.")
+				return nil
+			}
+			printSessionStatus(m, specPath)
 			return nil
 		},
+	}
+}
+
+func listSessions() error {
+	entries, err := os.ReadDir(filepath.Join(".baton", "sessions"))
+	if err != nil {
+		fmt.Println("No pipeline sessions.")
+		return nil
+	}
+	found := false
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".yaml") {
+			continue
+		}
+		path := filepath.Join(".baton", "sessions", e.Name())
+		m, err := session.Load(path)
+		if err != nil {
+			continue
+		}
+		found = true
+		specID := strings.TrimSuffix(e.Name(), ".yaml")
+		fmt.Fprintf(os.Stdout, "%-20s  status=%-12s  phase=%d/%d  resumed=%d\n",
+			specID, m.Status, m.Pipeline.CurrentPhase, 16, m.ResumeCount)
+	}
+	if !found {
+		fmt.Println("No pipeline sessions.")
+	}
+	return nil
+}
+
+func printSessionStatus(m *session.Manifest, specPath string) {
+	fmt.Fprintf(os.Stdout, "Pipeline Session\n")
+	fmt.Fprintf(os.Stdout, "  Spec:     %s\n", m.SpecPath)
+	fmt.Fprintf(os.Stdout, "  Status:   %s\n", m.Status)
+	fmt.Fprintf(os.Stdout, "  Phase:    %d/16\n", m.Pipeline.CurrentPhase)
+	fmt.Fprintf(os.Stdout, "  Started:  %s\n", m.StartedAt.Format(time.RFC3339))
+	fmt.Fprintf(os.Stdout, "  Resumes:  %d\n", m.ResumeCount)
+	fmt.Fprintln(os.Stdout)
+
+	if len(m.Pipeline.PhasesCompleted) > 0 {
+		fmt.Fprintf(os.Stdout, "  Completed: %v\n", m.Pipeline.PhasesCompleted)
+	}
+	if len(m.Pipeline.PhasesSkipped) > 0 {
+		fmt.Fprintf(os.Stdout, "  Skipped:   %v\n", m.Pipeline.PhasesSkipped)
+	}
+	fmt.Fprintf(os.Stdout, "  Budget:    L1: %d | L2: %d\n",
+		m.Budget.L1RetriesTotal, m.Budget.L2CyclesTotal)
+
+	if len(m.PipelineFiles) > 0 {
+		fmt.Fprintf(os.Stdout, "  Files:     %s\n", strings.Join(m.PipelineFiles, ", "))
+	}
+
+	if m.IsResumable() {
+		fmt.Fprintf(os.Stdout, "\n  Resume:   baton pipeline run %s\n", specPath)
 	}
 }
 

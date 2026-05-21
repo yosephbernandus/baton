@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/yosephbernandus/baton/internal/role"
+	"github.com/yosephbernandus/baton/internal/session"
 )
 
 var phaseDescriptions = map[string]string{
@@ -91,8 +92,54 @@ func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhase
 	fmt.Fprintf(&b, "  BATON:C:%s:fail:<reason>    — phase failed, explain why\n", ph.CompletionSignal)
 	fmt.Fprintf(&b, "  BATON:C:%s:blocked:<reason> — blocked on external dependency\n", ph.CompletionSignal)
 	b.WriteString("\nYou MUST output exactly one completion marker before exiting.\n")
-	b.WriteString("\nTo record notes for future attempts (if this phase is retried):\n")
-	fmt.Fprintf(&b, "  BATON:N:<what you tried and what happened>\n")
+	b.WriteString("\nRecord notes about key decisions, findings, or outcomes:\n")
+	fmt.Fprintf(&b, "  BATON:N:<what you decided, found, or accomplished>\n")
+
+	return b.String()
+}
+
+func BuildResumeBriefing(records []session.PhaseRecord, interruptedPhase int, interruptedName string, interruptReason string, pipelineFiles []string, l1Remaining, l2Remaining int) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "[PIPELINE RESUME — Continuing from Phase %d]\n\n", interruptedPhase)
+	b.WriteString("You are resuming an interrupted pipeline. Prior phases completed successfully.\n\n")
+
+	if len(records) > 0 {
+		b.WriteString("COMPLETED PHASES:\n")
+		for _, r := range records {
+			if r.Status != "completed" {
+				continue
+			}
+			detail := ""
+			if len(r.Notes) > 0 {
+				detail = ": " + strings.Join(r.Notes, "; ")
+			} else if len(r.FilesChanged) > 0 {
+				detail = ": modified " + strings.Join(r.FilesChanged, ", ")
+			}
+			attemptsNote := ""
+			if r.Attempts > 1 {
+				attemptsNote = fmt.Sprintf(" (%d attempts)", r.Attempts)
+			}
+			fmt.Fprintf(&b, "  Phase %d (%s)%s%s\n", r.ID, r.Name, attemptsNote, detail)
+		}
+		b.WriteString("\n")
+	}
+
+	if interruptedName != "" {
+		fmt.Fprintf(&b, "INTERRUPTED AT:\n")
+		fmt.Fprintf(&b, "  Phase %d (%s): %s\n\n", interruptedPhase, interruptedName, interruptReason)
+	}
+
+	if len(pipelineFiles) > 0 {
+		b.WriteString("CODE STATE:\n")
+		b.WriteString("  Files modified by this pipeline: ")
+		b.WriteString(strings.Join(pipelineFiles, ", "))
+		b.WriteString("\n\n")
+	}
+
+	fmt.Fprintf(&b, "BUDGET:\n")
+	fmt.Fprintf(&b, "  L1 retries: %d available | L2 cycles: %d available\n\n", l1Remaining, l2Remaining)
+	b.WriteString("Do not re-implement. Code is on disk. Read modified files and continue.\n")
 
 	return b.String()
 }

@@ -10,14 +10,33 @@ import (
 )
 
 type Manifest struct {
-	SessionID  string        `yaml:"session_id"`
-	StartedAt  time.Time     `yaml:"started_at"`
-	UpdatedAt  time.Time     `yaml:"updated_at"`
-	Status     string        `yaml:"status"`
-	SpecPath   string        `yaml:"spec_path"`
-	Complexity string        `yaml:"complexity"`
-	Pipeline   PipelineState `yaml:"pipeline"`
-	Budget     BudgetState   `yaml:"budget"`
+	SessionID           string        `yaml:"session_id"`
+	StartedAt           time.Time     `yaml:"started_at"`
+	UpdatedAt           time.Time     `yaml:"updated_at"`
+	Status              string        `yaml:"status"`
+	SpecPath            string        `yaml:"spec_path"`
+	Complexity          string        `yaml:"complexity"`
+	GitHead             string        `yaml:"git_head,omitempty"`
+	SpecCoreHash        string        `yaml:"spec_core_hash,omitempty"`
+	WorkerPID           int           `yaml:"worker_pid,omitempty"`
+	ResumeCount         int           `yaml:"resume_count"`
+	PhaseResumeAttempts map[int]int   `yaml:"phase_resume_attempts,omitempty"`
+	Pipeline            PipelineState `yaml:"pipeline"`
+	Budget              BudgetState   `yaml:"budget"`
+	PhaseRecords        []PhaseRecord `yaml:"phase_records,omitempty"`
+	PipelineFiles       []string      `yaml:"pipeline_files,omitempty"`
+}
+
+type PhaseRecord struct {
+	ID           int       `yaml:"id"`
+	Name         string    `yaml:"name"`
+	Status       string    `yaml:"status"`
+	Notes        []string  `yaml:"notes,omitempty"`
+	FilesChanged []string  `yaml:"files_changed,omitempty"`
+	Attempts     int       `yaml:"attempts"`
+	Duration     string    `yaml:"duration,omitempty"`
+	FailReason   string    `yaml:"fail_reason,omitempty"`
+	CompletedAt  time.Time `yaml:"completed_at,omitempty"`
 }
 
 type PipelineState struct {
@@ -110,7 +129,11 @@ func (m *Manifest) MarkCrashed() {
 }
 
 func (m *Manifest) IsResumable() bool {
-	return m.Status == "running" || m.Status == "crashed"
+	return m.Status == "running" || m.Status == "crashed" || m.Status == "rate_limited"
+}
+
+func (m *Manifest) MarkRateLimited(reason string) {
+	m.Status = "rate_limited"
 }
 
 func (m *Manifest) LastCompletedPhase() int {
@@ -128,6 +151,33 @@ func (m *Manifest) LastCompletedPhase() int {
 
 func (m *Manifest) RemainingL1Retries(max int) int { return max - m.Budget.L1RetriesTotal }
 func (m *Manifest) RemainingL2Cycles(max int) int  { return max - m.Budget.L2CyclesTotal }
+
+func SessionPath(specID string) string {
+	return filepath.Join(".baton", "sessions", specID+".yaml")
+}
+
+func (m *Manifest) AddPhaseRecord(r PhaseRecord) {
+	for i, existing := range m.PhaseRecords {
+		if existing.ID == r.ID {
+			m.PhaseRecords[i] = r
+			return
+		}
+	}
+	m.PhaseRecords = append(m.PhaseRecords, r)
+}
+
+func (m *Manifest) AddPipelineFiles(files []string) {
+	seen := make(map[string]bool)
+	for _, f := range m.PipelineFiles {
+		seen[f] = true
+	}
+	for _, f := range files {
+		if !seen[f] {
+			m.PipelineFiles = append(m.PipelineFiles, f)
+			seen[f] = true
+		}
+	}
+}
 
 func appendUnique(slice []int, val int) []int {
 	for _, v := range slice {

@@ -126,6 +126,10 @@ func TestIsResumable(t *testing.T) {
 	if !m.IsResumable() {
 		t.Error("crashed should be resumable")
 	}
+	m.MarkRateLimited("429")
+	if !m.IsResumable() {
+		t.Error("rate_limited should be resumable")
+	}
 	m.MarkCompleted()
 	if m.IsResumable() {
 		t.Error("completed should not be resumable")
@@ -169,5 +173,96 @@ func TestSaveCreatesDir(t *testing.T) {
 	m := New("test", "spec.yaml", "MEDIUM")
 	if err := m.Save(path); err != nil {
 		t.Fatalf("Save should create dirs: %v", err)
+	}
+}
+
+func TestSessionPath(t *testing.T) {
+	got := SessionPath("auth-api")
+	want := filepath.Join(".baton", "sessions", "auth-api.yaml")
+	if got != want {
+		t.Errorf("SessionPath=%q, want %q", got, want)
+	}
+}
+
+func TestAddPhaseRecord(t *testing.T) {
+	m := New("test", "spec.yaml", "MEDIUM")
+	m.AddPhaseRecord(PhaseRecord{ID: 1, Name: "setup", Status: "completed", Attempts: 1})
+	m.AddPhaseRecord(PhaseRecord{ID: 8, Name: "implementation", Status: "completed", Attempts: 2})
+
+	if len(m.PhaseRecords) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(m.PhaseRecords))
+	}
+
+	m.AddPhaseRecord(PhaseRecord{ID: 1, Name: "setup", Status: "completed", Attempts: 3})
+	if len(m.PhaseRecords) != 2 {
+		t.Fatalf("should replace existing, got %d", len(m.PhaseRecords))
+	}
+	if m.PhaseRecords[0].Attempts != 3 {
+		t.Errorf("should have updated attempts to 3, got %d", m.PhaseRecords[0].Attempts)
+	}
+}
+
+func TestAddPipelineFiles(t *testing.T) {
+	m := New("test", "spec.yaml", "MEDIUM")
+	m.AddPipelineFiles([]string{"a.go", "b.go"})
+	m.AddPipelineFiles([]string{"b.go", "c.go"})
+
+	if len(m.PipelineFiles) != 3 {
+		t.Errorf("expected 3 unique files, got %v", m.PipelineFiles)
+	}
+}
+
+func TestMarkRateLimited(t *testing.T) {
+	m := New("test", "spec.yaml", "MEDIUM")
+	m.MarkRateLimited("429")
+	if m.Status != "rate_limited" {
+		t.Errorf("status=%s, want rate_limited", m.Status)
+	}
+}
+
+func TestPhaseRecordSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.yaml")
+
+	m := New("test-pr", "spec.yaml", "LARGE")
+	m.GitHead = "abc1234"
+	m.SpecCoreHash = "d4e5f6a7"
+	m.ResumeCount = 2
+	m.AddPhaseRecord(PhaseRecord{
+		ID:       1,
+		Name:     "setup",
+		Status:   "completed",
+		Notes:    []string{"Go project", "45 files"},
+		Attempts: 1,
+		Duration: "12s",
+	})
+	m.AddPipelineFiles([]string{"main.go"})
+
+	if err := m.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if loaded.GitHead != "abc1234" {
+		t.Errorf("git_head=%s, want abc1234", loaded.GitHead)
+	}
+	if loaded.SpecCoreHash != "d4e5f6a7" {
+		t.Errorf("spec_core_hash=%s", loaded.SpecCoreHash)
+	}
+	if loaded.ResumeCount != 2 {
+		t.Errorf("resume_count=%d, want 2", loaded.ResumeCount)
+	}
+	if len(loaded.PhaseRecords) != 1 {
+		t.Fatalf("phase_records=%d, want 1", len(loaded.PhaseRecords))
+	}
+	if loaded.PhaseRecords[0].Name != "setup" {
+		t.Errorf("phase_records[0].name=%s", loaded.PhaseRecords[0].Name)
+	}
+	if len(loaded.PipelineFiles) != 1 || loaded.PipelineFiles[0] != "main.go" {
+		t.Errorf("pipeline_files=%v", loaded.PipelineFiles)
 	}
 }

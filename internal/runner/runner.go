@@ -229,7 +229,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		}
 	}
 
-	status := r.determineStatus(exitCode, clarification, cancelReason.Load(), output)
+	status := r.determineStatusForRuntime(exitCode, clarification, cancelReason.Load(), output, runtimeName)
 
 	var errorDetail string
 	if status == "failed" && exitCode == 0 {
@@ -339,6 +339,10 @@ func BuildToolRestrictionFlags(rt *config.RuntimeConfig, allowedTools []string) 
 }
 
 func (r *Runner) determineStatus(exitCode int, clarification string, reason int32, output []string) string {
+	return r.determineStatusForRuntime(exitCode, clarification, reason, output, "")
+}
+
+func (r *Runner) determineStatusForRuntime(exitCode int, clarification string, reason int32, output []string, runtimeName string) string {
 	if reason == cancelSilenceTimeout || reason == cancelAbsoluteTimeout {
 		return "timeout"
 	}
@@ -352,6 +356,9 @@ func (r *Runner) determineStatus(exitCode int, clarification string, reason int3
 			}
 		}
 	}
+	if r.detectRateLimit(exitCode, output, runtimeName) {
+		return "rate_limited"
+	}
 	if exitCode != 0 {
 		return "failed"
 	}
@@ -359,6 +366,47 @@ func (r *Runner) determineStatus(exitCode int, clarification string, reason int3
 		return "failed"
 	}
 	return "completed"
+}
+
+var defaultRateLimitPatterns = []string{
+	"rate limit", "rate_limit", "429",
+	"too many requests", "quota exceeded",
+	"overloaded", "capacity", "token limit",
+	"retry after", "retry-after",
+}
+
+func (r *Runner) detectRateLimit(exitCode int, output []string, runtimeName string) bool {
+	var patterns []string
+	var exitCodes []int
+
+	if rt, ok := r.cfg.Runtimes[runtimeName]; ok && rt.RateLimit != nil {
+		patterns = rt.RateLimit.Patterns
+		exitCodes = rt.RateLimit.ExitCodes
+	}
+	if len(patterns) == 0 {
+		patterns = defaultRateLimitPatterns
+	}
+
+	for _, code := range exitCodes {
+		if exitCode == code {
+			return true
+		}
+	}
+
+	tailStart := 0
+	if len(output) > 5 {
+		tailStart = len(output) - 5
+	}
+	for _, line := range output[tailStart:] {
+		lower := strings.ToLower(line)
+		for _, pattern := range patterns {
+			if strings.Contains(lower, strings.ToLower(pattern)) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 var outputErrorPatterns = []string{
