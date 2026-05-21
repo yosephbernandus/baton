@@ -37,6 +37,15 @@ runtimes:
       - deepseek
       - gemini-flash
       - deepseek-r1
+    # Rate limit detection (ADR-024)
+    # Patterns checked against last 5 lines of output only
+    # rate_limit:
+    #   patterns:
+    #     - "rate limit"
+    #     - "429"
+    #     - "too many requests"
+    #     - "quota exceeded"
+    #   exit_codes: []
 
   pi-agent:
     command: "pi-agent"

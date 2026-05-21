@@ -1525,9 +1525,24 @@ Domain-specific context injected into prompts from `.baton/skills/{domain}/`:
 
 Domain resolved from: spec `domain` field → inferred from `context_files` extensions/directories.
 
-### Session Manifest
+### Session Manifest and Smart Resume (ADR-024)
 
-Atomic YAML at `.baton/session.yaml` tracks pipeline state for crash recovery: current phase, completed phases, L1/L2 counts, dirty files. Updated at every state transition via temp file + `os.Rename`.
+Per-spec session files at `.baton/sessions/<specID>.yaml` track pipeline state. Updated atomically at every state transition via temp file + `os.Rename`.
+
+**Auto-resume:** Same `baton pipeline run spec.yaml` command auto-detects interrupted sessions and resumes from the last completed phase. No `--resume` flag needed. Safety checks run automatically:
+
+1. PID check — is previous worker still alive?
+2. Spec core hash — did the task (`what`/`why`) change?
+3. Git staleness — did external changes conflict with pipeline's files?
+4. Resume loop — has this phase failed 3+ times across resumes?
+
+If any check fails → fresh run with log message. All automatic, zero user intervention.
+
+**Phase records:** Each completed phase writes a structured record (notes from `BATON:N:` markers, files changed, attempts, duration). On resume, these records are assembled into a reasoning briefing injected into the prompt — giving the LLM a mental model of what prior phases decided, not raw output.
+
+**Rate limit detection:** Runner detects rate limit patterns in worker output (configurable per runtime). Rate-limited phases save session state without burning L1 retry budget. Pipeline exits cleanly for later resumption.
+
+**Budget carry-over:** L1/L2 budgets persist across resumes via the manifest. Pipeline respects configured maximums across the full task lifecycle, not per-run.
 
 ### Self-Annealing
 

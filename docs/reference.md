@@ -496,11 +496,15 @@ baton pipeline run .baton/specs/feature.yaml
 # Override complexity
 baton pipeline run .baton/specs/feature.yaml --complexity LARGE
 
-# Check session state
-baton session status
+# Auto-resumes if interrupted session exists for this spec
+# Same command — baton detects and resumes automatically
+baton pipeline run .baton/specs/feature.yaml
 
-# Reset after crash/failure
-baton session reset
+# Force fresh run (ignore existing session)
+baton pipeline run .baton/specs/feature.yaml --fresh
+
+# Check session state (shows interrupted sessions and resume info)
+baton pipeline status
 ```
 
 Task spec for pipeline — same format, optional `estimated_complexity` and `domain`:
@@ -534,8 +538,9 @@ spec:
 4. **Loop detection**: Jaccard similarity on output tails catches stuck workers early
 5. **L2 loops**: Failed verification → loops back to implementation (up to `max_l2_cycles`)
 6. **Dirty bit tracking**: Modified files injected into verification phase prompts
-7. **Session manifest**: Atomic YAML at `.baton/session.yaml` enables crash recovery
-8. **Escalation advisor** (opt-in): LLM consultation when all retries exhausted
+7. **Smart resume**: Per-spec sessions at `.baton/sessions/`. Auto-detects interrupted pipelines and resumes from last completed phase with reasoning briefing (ADR-024)
+8. **Rate limit detection**: Configurable patterns per runtime. Rate-limited phases save state without burning retry budget
+9. **Escalation advisor** (opt-in): LLM consultation when all retries exhausted
 
 ### Domain Skills (Optional)
 
@@ -655,11 +660,10 @@ baton anneal history
 
 | Command | Description |
 |---------|-------------|
-| `baton pipeline run <spec.yaml>` | Run 16-phase pipeline |
+| `baton pipeline run <spec.yaml>` | Run 16-phase pipeline (auto-resumes if interrupted session exists) |
 | `baton pipeline run <spec.yaml> --complexity SMALL` | Override complexity |
-| `baton pipeline status` | Show pipeline status |
-| `baton session status` | Show session manifest |
-| `baton session reset` | Clear session, start fresh |
+| `baton pipeline run <spec.yaml> --fresh` | Force fresh run, ignore existing session |
+| `baton pipeline status` | Show pipeline status (interrupted sessions, resume info) |
 | `baton advise <task-id>` | View advisor context for stuck task |
 | `baton feedback` | Analyze event log patterns |
 | `baton feedback --json` | Machine-readable analysis |

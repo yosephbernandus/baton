@@ -71,7 +71,7 @@ baton CLI (single Go binary)
   +-- Phase Machine ----------> 16-phase pipeline, L1/L2 loops, scratchpad, loop detection
   +-- Role Enforcer ----------> boundary verification, tool restriction, prompt injection
   +-- Skill Router -----------> .baton/skills/{domain}/ context loading
-  +-- Session Manifest -------> .baton/session.yaml (crash recovery)
+  +-- Session Manifest -------> .baton/sessions/<specID>.yaml (auto-resume, phase records)
   +-- Advisor ----------------> escalation consultation (opt-in LLM or context dump)
   +-- Acceptance Checker -----> runs post-task commands from spec
   +-- Escalation Detector ----> pattern matching on worker stdout
@@ -554,23 +554,44 @@ func (r *Router) LoadContext(domain string) (string, error)
 func InferDomain(contextFiles []string) string
 ```
 
-### 3.11 Session Manifest (`internal/session/`)
+### 3.11 Session Manifest and Smart Resume (`internal/session/`)
 
-Persistent YAML tracking pipeline state for crash recovery. Atomic writes via temp file + `os.Rename`.
+Per-spec session files at `.baton/sessions/<specID>.yaml` tracking pipeline state for auto-resume and crash recovery (ADR-024). Atomic writes via temp file + `os.Rename`.
 
 ```go
 type Manifest struct {
     SessionID, Status, SpecPath, Complexity string
     StartedAt, UpdatedAt time.Time
-    Pipeline  PipelineState
-    Budget    BudgetState
+    GitHead       string           // commit hash at pipeline start
+    SpecCoreHash  string           // sha256 of spec what+why
+    WorkerPID     int              // for concurrent access detection
+    ResumeCount   int              // times this session has been resumed
+    PhaseResumeAttempts map[int]int // per-phase resume attempt counter
+    Pipeline      PipelineState
+    PhaseRecords  []PhaseRecord    // structured records per completed phase
+    PipelineFiles []string         // files changed by this pipeline
+    Budget        BudgetState
+}
+
+type PhaseRecord struct {
+    ID           int
+    Name, Status string            // completed, failed, stuck, rate_limited, interrupted
+    Notes        []string           // from BATON:N markers
+    FilesChanged []string
+    Attempts     int
+    Duration     string
+    FailReason   string
+    CompletedAt  time.Time
 }
 
 func (m *Manifest) AdvancePhase(phaseID int)
 func (m *Manifest) RecordL1Retry() / RecordL2Cycle() / LoopBackTo()
-func (m *Manifest) MarkCompleted() / MarkFailed() / MarkCrashed()
+func (m *Manifest) RecordPhase(record PhaseRecord)
+func (m *Manifest) MarkCompleted() / MarkFailed() / MarkCrashed() / MarkRateLimited()
 func (m *Manifest) IsResumable() bool
 ```
+
+**Auto-resume flow:** `baton pipeline run spec.yaml` checks for existing session → safety checks (PID alive? spec changed? git conflicts? resume loop?) → if safe, resume from `LastCompletedPhase()+1` with reasoning briefing built from phase records. If unsafe, fresh run with log message. Zero user intervention.
 
 ### 3.12 Escalation Advisor (`internal/advisor/`)
 
