@@ -110,8 +110,13 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 	if cmd.Process != nil {
 		if t, err := r.store.Get(taskID); err == nil {
 			t.PID = cmd.Process.Pid
+			now := time.Now().UTC()
+			t.LastActivity = &now
 			_ = r.store.Update(t)
 		}
+		_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "worker_pid", map[string]interface{}{
+			"pid": cmd.Process.Pid,
+		})
 	}
 
 	sockPath := fmt.Sprintf(".baton/tasks/%s/baton.sock", taskID)
@@ -188,14 +193,21 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 
 	var output []string
 	var clarification string
+	var lastStoreTouchMs int64
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		line := scanner.Text()
 		output = append(output, line)
 
 		// Any output counts as liveness.
-		lastActivity.Store(time.Now().UnixMilli())
+		nowMs := time.Now().UnixMilli()
+		lastActivity.Store(nowMs)
 		isStuck.Store(false)
+
+		if nowMs-lastStoreTouchMs > 30_000 {
+			lastStoreTouchMs = nowMs
+			_ = r.store.TouchActivity(taskID)
+		}
 
 		_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "output", map[string]interface{}{
 			"stream": "stdout",

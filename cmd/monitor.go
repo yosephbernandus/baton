@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -38,6 +39,9 @@ func NewMonitorCmd() *cobra.Command {
 			killCh := make(chan string, 10)
 			model.SetKillChannel(killCh)
 
+			reapCh := make(chan string, 10)
+			model.SetReapChannel(reapCh)
+
 			go func() {
 				for taskID := range killCh {
 					if err := store.KillTask(taskID); err != nil {
@@ -45,6 +49,25 @@ func NewMonitorCmd() *cobra.Command {
 					}
 					if emitter != nil {
 						_ = emitter.TaskEvent(taskID, "", "", "", "task_killed", nil)
+					}
+				}
+			}()
+
+			go func() {
+				for taskID := range reapCh {
+					t, err := store.Get(taskID)
+					if err != nil || t.Status != "running" {
+						continue
+					}
+					t.Status = "failed"
+					t.Error = fmt.Sprintf("process exited unexpectedly (PID %d dead)", t.PID)
+					now := time.Now().UTC()
+					t.CompletedAt = &now
+					_ = store.Update(t)
+					if emitter != nil {
+						_ = emitter.TaskEvent(taskID, "", "", "", "task_failed", map[string]interface{}{
+							"reason": "process_dead",
+						})
 					}
 				}
 			}()

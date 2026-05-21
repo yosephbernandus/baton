@@ -31,6 +31,12 @@ func NewStatusCmd() *cobra.Command {
 				return exitError(1, "opening task store: %v", err)
 			}
 
+			if reaped, err := store.ReapDead(); err == nil && len(reaped) > 0 {
+				for _, id := range reaped {
+					fmt.Fprintf(cmd.OutOrStderr(), "reaped dead task: %s\n", id)
+				}
+			}
+
 			tasks, err := store.List(filter)
 			if err != nil {
 				return exitError(1, "listing tasks: %v", err)

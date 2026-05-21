@@ -350,9 +350,24 @@ func (p *Pipeline) executePhaseWithRetries(
 	var lastFailReason string
 	totalAttempts := maxRetries + 1
 
+	if p.store != nil {
+		now := time.Now().UTC()
+		phaseTask := &task.Task{
+			ID:        taskID,
+			Runtime:   runtimeName,
+			Model:     model,
+			Status:    "running",
+			Spec:      p.spec,
+			CreatedAt: now,
+			StartedAt: &now,
+		}
+		_ = p.store.Create(phaseTask)
+	}
+
 	for attempt := 1; attempt <= totalAttempts; attempt++ {
 		select {
 		case <-ctx.Done():
+			p.finalizePhaseTask(taskID, "failed")
 			return outcomeCancelled, "pipeline cancelled"
 		default:
 		}
@@ -392,6 +407,7 @@ func (p *Pipeline) executePhaseWithRetries(
 					result.FailReason = fmt.Sprintf("%s (loop detected — worker stuck)", lastFailReason)
 					result.AttemptsByPhase[ph.ID] = attempt
 					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_stuck")
+					p.finalizePhaseTask(taskID, "failed")
 					return outcomeStuck, lastFailReason
 				}
 			}
@@ -401,6 +417,7 @@ func (p *Pipeline) executePhaseWithRetries(
 		if runResult.Status == "rate_limited" {
 			result.AttemptsByPhase[ph.ID] = attempt
 			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_rate_limited")
+			p.finalizePhaseTask(taskID, "rate_limited")
 			return outcomeRateLimited, fmt.Sprintf("phase %d (%s): rate limited", ph.ID, ph.Name)
 		}
 
@@ -439,6 +456,7 @@ func (p *Pipeline) executePhaseWithRetries(
 			p.lastPhaseNotes = extractNotes(runResult.Output)
 			p.lastPhaseErrors = extractErrors(runResult.Output)
 			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
+			p.finalizePhaseTask(taskID, "completed")
 			return outcomeCompleted, ""
 
 		case completion.Status == "fail":
@@ -454,6 +472,7 @@ func (p *Pipeline) executePhaseWithRetries(
 					result.FailReason = fmt.Sprintf("%s (loop detected — worker stuck)", lastFailReason)
 					result.AttemptsByPhase[ph.ID] = attempt
 					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_stuck")
+					p.finalizePhaseTask(taskID, "failed")
 					return outcomeStuck, lastFailReason
 				}
 			}
@@ -464,6 +483,7 @@ func (p *Pipeline) executePhaseWithRetries(
 			result.FailReason = fmt.Sprintf("phase %d (%s) blocked: %s", ph.ID, ph.Name, completion.Detail)
 			result.AttemptsByPhase[ph.ID] = attempt
 			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_blocked")
+			p.finalizePhaseTask(taskID, "failed")
 			return outcomeBlocked, result.FailReason
 
 		default:
@@ -487,6 +507,7 @@ func (p *Pipeline) executePhaseWithRetries(
 				p.lastPhaseNotes = extractNotes(runResult.Output)
 				p.lastPhaseErrors = extractErrors(runResult.Output)
 				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
+				p.finalizePhaseTask(taskID, "completed")
 				return outcomeCompleted, ""
 			}
 			notes := extractNotes(runResult.Output)
@@ -503,6 +524,7 @@ func (p *Pipeline) executePhaseWithRetries(
 					result.FailReason = fmt.Sprintf("%s (loop detected — worker stuck)", lastFailReason)
 					result.AttemptsByPhase[ph.ID] = attempt
 					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_stuck")
+					p.finalizePhaseTask(taskID, "failed")
 					return outcomeStuck, lastFailReason
 				}
 			}
@@ -535,6 +557,7 @@ func (p *Pipeline) executePhaseWithRetries(
 					p.lastPhaseNotes = extractNotes(runResult.Output)
 					p.lastPhaseErrors = extractErrors(runResult.Output)
 					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
+					p.finalizePhaseTask(taskID, "completed")
 					return outcomeCompleted, ""
 				}
 			}
@@ -545,7 +568,22 @@ func (p *Pipeline) executePhaseWithRetries(
 	result.FailReason = fmt.Sprintf("%s (after %d attempts)", lastFailReason, totalAttempts)
 	result.AttemptsByPhase[ph.ID] = totalAttempts
 	p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_failed")
+	p.finalizePhaseTask(taskID, "failed")
 	return outcomeFailed, lastFailReason
+}
+
+func (p *Pipeline) finalizePhaseTask(taskID, status string) {
+	if p.store == nil {
+		return
+	}
+	t, err := p.store.Get(taskID)
+	if err != nil {
+		return
+	}
+	t.Status = status
+	now := time.Now().UTC()
+	t.CompletedAt = &now
+	_ = p.store.Update(t)
 }
 
 func intPtr(i int) *int { return &i }

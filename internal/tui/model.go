@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/yosephbernandus/baton/internal/events"
+	"github.com/yosephbernandus/baton/internal/task"
 )
 
 var (
@@ -81,6 +82,8 @@ type taskState struct {
 	Clarify      string
 	Progress     string
 	Stuck        bool
+	PID          int
+	LastEventAt  time.Time
 	viewport     viewport.Model
 	vpReady      bool
 	userScrolled bool
@@ -101,6 +104,7 @@ type Model struct {
 	showOutput bool
 	quitting   bool
 	killCh     chan string
+	reapCh     chan string
 	focus      focusPanel
 }
 
@@ -239,6 +243,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForEvent(m.eventCh)
 
 	case tickMsg:
+		m.checkDeadProcesses()
 		return m, tickCmd()
 	}
 
@@ -438,12 +443,18 @@ func (m *Model) processEvent(ev events.Event) {
 	if ev.Model != "" {
 		t.Model = ev.Model
 	}
+	t.LastEventAt = ev.Timestamp
+
 	switch ev.EventType {
 	case "task_created":
 		t.Status = "pending"
 	case "task_started":
 		t.Status = "running"
 		t.StartedAt = ev.Timestamp
+	case "worker_pid":
+		if pid, ok := ev.Data["pid"].(float64); ok {
+			t.PID = int(pid)
+		}
 	case "output":
 		if line, ok := ev.Data["line"].(string); ok {
 			t.Output = append(t.Output, line)
@@ -582,6 +593,10 @@ func (m *Model) styledStatus(t *taskState) string {
 		if t.Stuck {
 			return statusClarify.Render("⚠ stuck")
 		}
+		stale := !t.LastEventAt.IsZero() && time.Since(t.LastEventAt) > 5*time.Minute
+		if stale {
+			return statusTimeout.Render("⚠ stale")
+		}
 		if t.Progress != "" {
 			msg := t.Progress
 			if len(msg) > 18 {
@@ -671,8 +686,33 @@ func (m *Model) clearStale() {
 	m.onCursorChanged()
 }
 
+func (m *Model) checkDeadProcesses() {
+	for _, id := range m.taskOrder {
+		t := m.tasks[id]
+		if t.Status != "running" {
+			continue
+		}
+		if t.PID <= 0 {
+			continue
+		}
+		if !task.ProcessAlive(t.PID) {
+			t.Status = "failed"
+			if m.reapCh != nil {
+				select {
+				case m.reapCh <- id:
+				default:
+				}
+			}
+		}
+	}
+}
+
 func (m *Model) SetKillChannel(ch chan string) {
 	m.killCh = ch
+}
+
+func (m *Model) SetReapChannel(ch chan string) {
+	m.reapCh = ch
 }
 
 func waitForEvent(ch <-chan events.Event) tea.Cmd {

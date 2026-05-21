@@ -167,6 +167,44 @@ func (s *Store) CleanStale(maxAge time.Duration) ([]string, error) {
 	return cleaned, nil
 }
 
+func (s *Store) ReapDead() ([]string, error) {
+	tasks, err := s.List("")
+	if err != nil {
+		return nil, err
+	}
+
+	var reaped []string
+	for _, t := range tasks {
+		if t.Status != "running" {
+			continue
+		}
+		if t.PID <= 0 {
+			continue
+		}
+		if !ProcessAlive(t.PID) {
+			t.Status = "failed"
+			t.Error = "process exited unexpectedly (PID " + fmt.Sprintf("%d", t.PID) + " dead)"
+			now := time.Now().UTC()
+			t.CompletedAt = &now
+			if err := s.Update(t); err != nil {
+				continue
+			}
+			reaped = append(reaped, t.ID)
+		}
+	}
+	return reaped, nil
+}
+
+func (s *Store) TouchActivity(id string) error {
+	t, err := s.Get(id)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	t.LastActivity = &now
+	return s.Update(t)
+}
+
 func (s *Store) write(t *Task) error {
 	data, err := yaml.Marshal(t)
 	if err != nil {
