@@ -105,6 +105,7 @@ type Model struct {
 	quitting   bool
 	killCh     chan string
 	reapCh     chan string
+	showAll    bool
 	focus      focusPanel
 }
 
@@ -142,8 +143,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancel()
 			return m, tea.Quit
 		case "K":
-			if m.cursor < len(m.taskOrder) {
-				id := m.taskOrder[m.cursor]
+			visible := m.visibleTasks()
+			if m.cursor < len(visible) {
+				id := visible[m.cursor]
 				t := m.tasks[id]
 				if t.Status == "running" && m.killCh != nil {
 					select {
@@ -152,6 +154,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+		case "a":
+			m.showAll = !m.showAll
+			m.cursor = 0
+			m.taskScroll = 0
 		case "c":
 			m.clearStale()
 		case "tab":
@@ -183,8 +189,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.resizeAllViewports()
 			}
 		default:
-			if m.focus == focusOutput && m.showOutput && m.cursor < len(m.taskOrder) {
-				t := m.tasks[m.taskOrder[m.cursor]]
+			visible := m.visibleTasks()
+			if m.focus == focusOutput && m.showOutput && m.cursor < len(visible) {
+				t := m.tasks[visible[m.cursor]]
 				m.ensureViewport(t)
 				var cmd tea.Cmd
 				t.viewport, cmd = t.viewport.Update(msg)
@@ -199,7 +206,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.onCursorChanged()
 					}
 				case "down", "j":
-					if m.cursor < len(m.taskOrder)-1 {
+					if m.cursor < len(visible)-1 {
 						m.cursor++
 						m.scrollToCursor()
 						m.onCursorChanged()
@@ -374,8 +381,9 @@ func (m *Model) onCursorChanged() {
 			m.setViewportKeysEnabled(t, false)
 		}
 	}
-	if m.cursor < len(m.taskOrder) && m.showOutput {
-		t := m.tasks[m.taskOrder[m.cursor]]
+	visible := m.visibleTasks()
+	if m.cursor < len(visible) && m.showOutput {
+		t := m.tasks[visible[m.cursor]]
 		m.ensureViewport(t)
 		m.setViewportKeysEnabled(t, m.focus == focusOutput)
 	}
@@ -398,7 +406,7 @@ func (m *Model) View() string {
 	b.WriteString(taskTable)
 	lineCount += strings.Count(taskTable, "\n")
 
-	if m.showOutput && len(m.taskOrder) > 0 {
+	if m.showOutput && len(m.visibleTasks()) > 0 {
 		m.dividerRow = lineCount
 		b.WriteString(m.renderDivider())
 		b.WriteString("\n")
@@ -416,7 +424,7 @@ func (m *Model) View() string {
 	if m.showOutput && m.focus == focusOutput {
 		helpText = "[↑/↓/j/k] scroll  [pgup/pgdn] page  [tab] task list  [+/-] resize  [enter] close  [q] quit"
 	} else {
-		helpText = "[↑/↓] select  [enter] output  [tab] focus output  [+/-] resize  [K] kill  [c] clear  [q] quit"
+		helpText = "[↑/↓] select  [enter] output  [tab] focus output  [+/-] resize  [a] all  [K] kill  [c] clear  [q] quit"
 	}
 	help := helpStyle.Render(helpText)
 	b.WriteString(help)
@@ -517,6 +525,8 @@ func (m *Model) processEvent(ev events.Event) {
 func (m *Model) renderTaskTable() string {
 	var b strings.Builder
 
+	visible := m.visibleTasks()
+
 	focusMarker := " "
 	hStyle := headerStyle
 	if m.focus == focusTaskList || !m.showOutput {
@@ -524,18 +534,29 @@ func (m *Model) renderTaskTable() string {
 		hStyle = focusedHeaderStyle
 	}
 
-	totalTasks := len(m.taskOrder)
+	totalTasks := len(visible)
 	maxVisible := m.maxVisibleTasks()
+
+	filterHint := ""
+	if !m.showAll {
+		filterHint = " (active)"
+	} else {
+		filterHint = " (all)"
+	}
 
 	scrollHint := ""
 	if totalTasks > maxVisible {
 		scrollHint = fmt.Sprintf(" [%d/%d]", m.cursor+1, totalTasks)
 	}
 
-	header := fmt.Sprintf("%s %-16s %-12s %-12s %-22s %-10s%s",
-		focusMarker, "TASK ID", "RUNTIME", "MODEL", "STATUS", "DURATION", scrollHint)
+	header := fmt.Sprintf("%s %-16s %-12s %-12s %-22s %-10s%s%s",
+		focusMarker, "TASK ID", "RUNTIME", "MODEL", "STATUS", "DURATION", scrollHint, filterHint)
 	b.WriteString(hStyle.Render(header))
 	b.WriteString("\n")
+
+	if m.cursor >= totalTasks && totalTasks > 0 {
+		m.cursor = totalTasks - 1
+	}
 
 	// Show scroll-up indicator
 	if m.taskScroll > 0 {
@@ -549,7 +570,7 @@ func (m *Model) renderTaskTable() string {
 	}
 
 	for i := m.taskScroll; i < end; i++ {
-		id := m.taskOrder[i]
+		id := visible[i]
 		t := m.tasks[id]
 
 		status := m.styledStatus(t)
@@ -625,10 +646,11 @@ func (m *Model) styledStatus(t *taskState) string {
 }
 
 func (m *Model) renderOutput() string {
-	if m.cursor >= len(m.taskOrder) {
+	visible := m.visibleTasks()
+	if m.cursor >= len(visible) {
 		return ""
 	}
-	id := m.taskOrder[m.cursor]
+	id := visible[m.cursor]
 	t := m.tasks[id]
 	m.ensureViewport(t)
 
@@ -705,6 +727,27 @@ func (m *Model) checkDeadProcesses() {
 			}
 		}
 	}
+}
+
+func isTerminalStatus(status string) bool {
+	switch status {
+	case "completed", "failed", "killed", "timeout", "deferred":
+		return true
+	}
+	return false
+}
+
+func (m *Model) visibleTasks() []string {
+	if m.showAll {
+		return m.taskOrder
+	}
+	var visible []string
+	for _, id := range m.taskOrder {
+		if !isTerminalStatus(m.tasks[id].Status) {
+			visible = append(visible, id)
+		}
+	}
+	return visible
 }
 
 func (m *Model) SetKillChannel(ch chan string) {
