@@ -338,10 +338,6 @@ func BuildToolRestrictionFlags(rt *config.RuntimeConfig, allowedTools []string) 
 	}
 }
 
-func (r *Runner) determineStatus(exitCode int, clarification string, reason int32, output []string) string {
-	return r.determineStatusForRuntime(exitCode, clarification, reason, output, "")
-}
-
 func (r *Runner) determineStatusForRuntime(exitCode int, clarification string, reason int32, output []string, runtimeName string) string {
 	if reason == cancelSilenceTimeout || reason == cancelAbsoluteTimeout {
 		return "timeout"
