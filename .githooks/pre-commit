@@ -1,0 +1,30 @@
+#!/bin/sh
+set -e
+
+echo "pre-commit: running checks..."
+
+# Always run build (catches compile errors + unused imports)
+echo "  go build..."
+go build ./...
+
+# Always run vet
+echo "  go vet..."
+go vet ./...
+
+# Run golangci-lint if available (matches CI v1.64)
+LINT_BIN=""
+if command -v golangci-lint >/dev/null 2>&1; then
+    LINT_BIN="golangci-lint"
+elif [ -x "$HOME/go/bin/golangci-lint" ]; then
+    LINT_BIN="$HOME/go/bin/golangci-lint"
+fi
+
+if [ -n "$LINT_BIN" ]; then
+    echo "  golangci-lint..."
+    $LINT_BIN run
+else
+    echo "  golangci-lint not found, running tests as fallback..."
+    go test ./... -count=1 -short
+fi
+
+echo "pre-commit: all checks passed"

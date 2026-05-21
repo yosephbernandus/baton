@@ -72,9 +72,10 @@ func TestAnalyzeRuntimeMetrics(t *testing.T) {
 		t.Errorf("tasks=%d", a.EventWindow.TotalTasks)
 	}
 
-	kimi := a.RuntimePerformance["opencode/kimi"]
-	if kimi == nil {
+	kimi, ok := a.RuntimePerformance["opencode/kimi"]
+	if !ok || kimi == nil {
 		t.Fatal("missing opencode/kimi metrics")
+		return
 	}
 	if kimi.Tasks != 3 {
 		t.Errorf("kimi tasks=%d", kimi.Tasks)
@@ -86,9 +87,10 @@ func TestAnalyzeRuntimeMetrics(t *testing.T) {
 		t.Errorf("kimi success_rate=%f", kimi.SuccessRate)
 	}
 
-	sonnet := a.RuntimePerformance["claude/sonnet"]
-	if sonnet == nil {
+	sonnet, ok := a.RuntimePerformance["claude/sonnet"]
+	if !ok || sonnet == nil {
 		t.Fatal("missing claude/sonnet metrics")
+		return
 	}
 	if sonnet.SuccessRate != 1.0 {
 		t.Errorf("sonnet success_rate=%f", sonnet.SuccessRate)
@@ -110,9 +112,10 @@ func TestAnalyzeDomainMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rm := a.RuntimePerformance["rt/m"]
-	if rm == nil {
+	rm, ok := a.RuntimePerformance["rt/m"]
+	if !ok || rm == nil {
 		t.Fatal("missing rt/m")
+		return
 	}
 	backend := rm.ByDomain["backend"]
 	if backend == nil || backend.Tasks != 2 || backend.Successes != 2 {
@@ -141,9 +144,10 @@ func TestAnalyzePhaseMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pm := a.PhaseMetrics["implementation"]
-	if pm == nil {
+	pm, ok := a.PhaseMetrics["implementation"]
+	if !ok || pm == nil {
 		t.Fatal("missing implementation phase metrics")
+		return
 	}
 	if pm.TotalRuns != 2 {
 		t.Errorf("runs=%d", pm.TotalRuns)
