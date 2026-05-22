@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/yosephbernandus/baton/internal/events"
 	"github.com/yosephbernandus/baton/internal/task"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -108,7 +111,8 @@ type Model struct {
 	reapCh     chan string
 	showAll    bool
 	focus      focusPanel
-	store *task.Store
+	store   *task.Store
+	taskDir string
 }
 
 type eventMsg events.Event
@@ -459,9 +463,17 @@ func (m *Model) processEvent(ev events.Event) {
 	switch ev.EventType {
 	case "task_created":
 		t.Status = "pending"
-	case "task_started":
+	case "task_started", "worker_started":
 		t.Status = "running"
 		t.StartedAt = ev.Timestamp
+		if ev.Data != nil {
+			if pid, ok := ev.Data["pid"].(float64); ok && pid > 0 {
+				t.PID = int(pid)
+			}
+			if role, ok := ev.Data["role"].(string); ok && role != "" {
+				t.Progress = role
+			}
+		}
 	case "worker_pid":
 		if pid, ok := ev.Data["pid"].(float64); ok {
 			t.PID = int(pid)
@@ -510,6 +522,17 @@ func (m *Model) processEvent(ev events.Event) {
 		t.Status = "pending"
 	case "task_redispatched":
 		t.Status = "running"
+	case "phase_advanced":
+		if name, ok := ev.Data["phase_name"].(string); ok {
+			t.Progress = name
+		}
+		if role, ok := ev.Data["role"].(string); ok && t.Runtime == "" {
+			t.Runtime = role
+		}
+	case "phase_completed_by_worker":
+		// Worker completed current phase — still running overall
+	case "worker_completed":
+		t.Status = "completed"
 	case "worker_heartbeat", "worker_progress", "worker_milestone":
 		if msg, ok := ev.Data["msg"].(string); ok {
 			t.Progress = msg
@@ -771,8 +794,9 @@ func (m *Model) SetReapChannel(ch chan string) {
 	m.reapCh = ch
 }
 
-func (m *Model) SetStore(s *task.Store) {
+func (m *Model) SetStore(s *task.Store, taskDir string) {
 	m.store = s
+	m.taskDir = taskDir
 }
 
 func (m *Model) reconcileWithStore() {
@@ -787,6 +811,7 @@ func (m *Model) reconcileWithStore() {
 		ts.reconciled = true
 		t, err := m.store.Get(id)
 		if err != nil {
+			m.reconcileWorkerState(ts)
 			continue
 		}
 		if ts.Runtime == "" && t.Runtime != "" {
@@ -805,8 +830,6 @@ func (m *Model) reconcileWithStore() {
 		if ts.PID <= 0 && t.PID > 0 {
 			ts.PID = t.PID
 		}
-		// Dead PID check — checkDeadProcesses() handles ongoing checks each tick,
-		// but reconcile catches it immediately on startup before first tick cycle.
 		if ts.Status == "running" && ts.PID > 0 && !task.ProcessAlive(ts.PID) {
 			ts.Status = "failed"
 			if t.Duration != "" {
@@ -817,6 +840,53 @@ func (m *Model) reconcileWithStore() {
 				case m.reapCh <- id:
 				default:
 				}
+			}
+		}
+	}
+}
+
+type workerState struct {
+	State     string `yaml:"state"`
+	PhaseName string `yaml:"phase_name"`
+	Role      string `yaml:"role"`
+	WorkerPID int    `yaml:"worker_pid"`
+}
+
+func (m *Model) reconcileWorkerState(ts *taskState) {
+	if m.taskDir == "" {
+		return
+	}
+	wsPath := filepath.Join(m.taskDir, ts.ID, "worker-state.yaml")
+	data, err := os.ReadFile(wsPath)
+	if err != nil {
+		return
+	}
+	var ws workerState
+	if err := yaml.Unmarshal(data, &ws); err != nil {
+		return
+	}
+	if ts.PID <= 0 && ws.WorkerPID > 0 {
+		ts.PID = ws.WorkerPID
+	}
+	if ws.PhaseName != "" {
+		ts.Progress = ws.PhaseName
+	}
+	if ws.Role != "" && ts.Runtime == "" {
+		ts.Runtime = ws.Role
+	}
+
+	// Dead PID → task died mid-work
+	if ts.PID > 0 && !task.ProcessAlive(ts.PID) {
+		// Check if worker finished all phases (state=done)
+		if ws.State == "done" || ws.State == "completed" {
+			ts.Status = "completed"
+		} else {
+			ts.Status = "failed"
+		}
+		if m.reapCh != nil {
+			select {
+			case m.reapCh <- ts.ID:
+			default:
 			}
 		}
 	}

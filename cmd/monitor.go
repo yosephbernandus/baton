@@ -36,7 +36,7 @@ func NewMonitorCmd() *cobra.Command {
 
 			emitter, _ := events.NewEmitter(cfg.EventLog)
 
-			model.SetStore(store)
+			model.SetStore(store, cfg.TaskDir)
 
 			killCh := make(chan string, 10)
 			model.SetKillChannel(killCh)
