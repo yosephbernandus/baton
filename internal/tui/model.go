@@ -107,6 +107,8 @@ type Model struct {
 	reapCh     chan string
 	showAll    bool
 	focus      focusPanel
+	store      *task.Store
+	reconciled bool
 }
 
 type eventMsg events.Event
@@ -250,6 +252,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForEvent(m.eventCh)
 
 	case tickMsg:
+		m.reconcileWithStore()
 		m.checkDeadProcesses()
 		return m, tickCmd()
 	}
@@ -756,6 +759,33 @@ func (m *Model) SetKillChannel(ch chan string) {
 
 func (m *Model) SetReapChannel(ch chan string) {
 	m.reapCh = ch
+}
+
+func (m *Model) SetStore(s *task.Store) {
+	m.store = s
+}
+
+func (m *Model) reconcileWithStore() {
+	if m.store == nil || m.reconciled {
+		return
+	}
+	m.reconciled = true
+	for _, id := range m.taskOrder {
+		ts := m.tasks[id]
+		if isTerminalStatus(ts.Status) {
+			continue
+		}
+		t, err := m.store.Get(id)
+		if err != nil {
+			continue
+		}
+		if isTerminalStatus(t.Status) {
+			ts.Status = t.Status
+			if t.Duration != "" {
+				ts.Duration = t.Duration
+			}
+		}
+	}
 }
 
 func waitForEvent(ch <-chan events.Event) tea.Cmd {

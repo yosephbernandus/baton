@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/yosephbernandus/baton/internal/config"
+	"github.com/yosephbernandus/baton/internal/events"
 	"github.com/yosephbernandus/baton/internal/task"
 )
 
@@ -54,12 +55,23 @@ func NewKillCmd() *cobra.Command {
 				return nil
 			}
 
+			emitter, _ := events.NewEmitter(cfg.EventLog)
+
 			var failed int
 			for _, id := range ids {
 				if err := store.KillTask(id); err != nil {
 					fmt.Fprintf(cmd.OutOrStderr(), "kill %s: %v\n", id, err)
 					failed++
 					continue
+				}
+				if emitter != nil {
+					t, _ := store.Get(id)
+					runtime, model := "", ""
+					if t != nil {
+						runtime = t.Runtime
+						model = t.Model
+					}
+					_ = emitter.TaskEvent(id, runtime, model, "", "task_killed", nil)
 				}
 				fmt.Printf("killed %s\n", id)
 			}
