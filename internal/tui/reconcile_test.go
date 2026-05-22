@@ -80,12 +80,21 @@ func TestReconcileWithStore(t *testing.T) {
 		t.Errorf("case2: expected duration '5m', got %q", m.tasks["case2"].Duration)
 	}
 
-	// Verify reconciled flag prevents re-run
+	// Verify per-task reconciled flag prevents re-check of same task
 	m.tasks["case6"].Status = "running"
 	_ = store.Create(&task.Task{ID: "case6", Runtime: "rt", Model: "m", Status: "killed", CreatedAt: now})
 	m.reconcileWithStore()
 	if m.tasks["case6"].Status != "running" {
-		t.Error("reconciled flag should prevent second reconciliation")
+		t.Error("per-task reconciled flag should prevent re-reconciliation of already-checked task")
+	}
+
+	// But NEW tasks added after first reconcile should still get checked
+	_ = store.Create(&task.Task{ID: "case7", Runtime: "rt", Model: "m", Status: "completed", Duration: "2m", CreatedAt: now})
+	m.tasks["case7"] = &taskState{ID: "case7", Status: "running"}
+	m.taskOrder = append(m.taskOrder, "case7")
+	m.reconcileWithStore()
+	if m.tasks["case7"].Status != "completed" {
+		t.Errorf("case7: new task after first reconcile should be reconciled, got %q", m.tasks["case7"].Status)
 	}
 
 	// Verify reap channel got case3 (dead PID)

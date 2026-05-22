@@ -84,6 +84,7 @@ type taskState struct {
 	Stuck        bool
 	PID          int
 	LastEventAt  time.Time
+	reconciled   bool
 	viewport     viewport.Model
 	vpReady      bool
 	userScrolled bool
@@ -107,8 +108,7 @@ type Model struct {
 	reapCh     chan string
 	showAll    bool
 	focus      focusPanel
-	store      *task.Store
-	reconciled bool
+	store *task.Store
 }
 
 type eventMsg events.Event
@@ -776,15 +776,15 @@ func (m *Model) SetStore(s *task.Store) {
 }
 
 func (m *Model) reconcileWithStore() {
-	if m.store == nil || m.reconciled {
+	if m.store == nil {
 		return
 	}
-	m.reconciled = true
 	for _, id := range m.taskOrder {
 		ts := m.tasks[id]
-		if isTerminalStatus(ts.Status) {
+		if ts.reconciled || isTerminalStatus(ts.Status) {
 			continue
 		}
+		ts.reconciled = true
 		t, err := m.store.Get(id)
 		if err != nil {
 			continue
