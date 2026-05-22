@@ -717,10 +717,20 @@ func (m *Model) checkDeadProcesses() {
 		if t.Status != "running" {
 			continue
 		}
-		if t.PID <= 0 {
+		if t.PID > 0 && !task.ProcessAlive(t.PID) {
+			t.Status = "failed"
+			if m.reapCh != nil {
+				select {
+				case m.reapCh <- id:
+				default:
+				}
+			}
 			continue
 		}
-		if !task.ProcessAlive(t.PID) {
+		// Catch zombie tasks: running >1hr with no events >30min.
+		// Handles PID-recycled processes and tasks without PID.
+		if !t.StartedAt.IsZero() && time.Since(t.StartedAt) > time.Hour &&
+			!t.LastEventAt.IsZero() && time.Since(t.LastEventAt) > 30*time.Minute {
 			t.Status = "failed"
 			if m.reapCh != nil {
 				select {
@@ -779,10 +789,34 @@ func (m *Model) reconcileWithStore() {
 		if err != nil {
 			continue
 		}
+		if ts.Runtime == "" && t.Runtime != "" {
+			ts.Runtime = t.Runtime
+		}
+		if ts.Model == "" && t.Model != "" {
+			ts.Model = t.Model
+		}
 		if isTerminalStatus(t.Status) {
 			ts.Status = t.Status
 			if t.Duration != "" {
 				ts.Duration = t.Duration
+			}
+			continue
+		}
+		if ts.PID <= 0 && t.PID > 0 {
+			ts.PID = t.PID
+		}
+		// Dead PID check — checkDeadProcesses() handles ongoing checks each tick,
+		// but reconcile catches it immediately on startup before first tick cycle.
+		if ts.Status == "running" && ts.PID > 0 && !task.ProcessAlive(ts.PID) {
+			ts.Status = "failed"
+			if t.Duration != "" {
+				ts.Duration = t.Duration
+			}
+			if m.reapCh != nil {
+				select {
+				case m.reapCh <- id:
+				default:
+				}
 			}
 		}
 	}
