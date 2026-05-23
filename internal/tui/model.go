@@ -118,6 +118,19 @@ type Model struct {
 type eventMsg events.Event
 type tickMsg time.Time
 
+type reconcileResult struct {
+	id       string
+	status   string
+	duration string
+	runtime  string
+	model    string
+	pid      int
+	progress string
+	reap     bool
+}
+
+type reconcileMsg []reconcileResult
+
 func NewModel(eventPath string) (*Model, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -255,10 +268,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.processEvent(events.Event(msg))
 		return m, waitForEvent(m.eventCh)
 
+	case reconcileMsg:
+		m.applyReconcileResults(msg)
+		return m, nil
+
 	case tickMsg:
-		m.reconcileWithStore()
 		m.checkDeadProcesses()
-		return m, tickCmd()
+		cmd := m.startReconciliation()
+		return m, tea.Batch(tickCmd(), cmd)
 	}
 
 	return m, nil
@@ -799,47 +816,105 @@ func (m *Model) SetStore(s *task.Store, taskDir string) {
 	m.taskDir = taskDir
 }
 
-func (m *Model) reconcileWithStore() {
+func (m *Model) startReconciliation() tea.Cmd {
 	if m.store == nil {
-		return
+		return nil
 	}
+
+	type pending struct {
+		id     string
+		status string
+		pid    int
+	}
+	var batch []pending
 	for _, id := range m.taskOrder {
 		ts := m.tasks[id]
 		if ts.reconciled || isTerminalStatus(ts.Status) {
 			continue
 		}
 		ts.reconciled = true
-		t, err := m.store.Get(id)
-		if err != nil {
-			m.reconcileWorkerState(ts)
-			continue
-		}
-		if ts.Runtime == "" && t.Runtime != "" {
-			ts.Runtime = t.Runtime
-		}
-		if ts.Model == "" && t.Model != "" {
-			ts.Model = t.Model
-		}
-		if isTerminalStatus(t.Status) {
-			ts.Status = t.Status
-			if t.Duration != "" {
-				ts.Duration = t.Duration
-			}
-			continue
-		}
-		if ts.PID <= 0 && t.PID > 0 {
-			ts.PID = t.PID
-		}
-		if ts.Status == "running" && ts.PID > 0 && !task.ProcessAlive(ts.PID) {
-			ts.Status = "failed"
-			if t.Duration != "" {
-				ts.Duration = t.Duration
-			}
-			if m.reapCh != nil {
-				select {
-				case m.reapCh <- id:
-				default:
+		batch = append(batch, pending{id: id, status: ts.Status, pid: ts.PID})
+	}
+	if len(batch) == 0 {
+		return nil
+	}
+
+	store := m.store
+	taskDir := m.taskDir
+
+	return func() tea.Msg {
+		var results []reconcileResult
+		for _, p := range batch {
+			r := reconcileResult{id: p.id}
+
+			t, err := store.Get(p.id)
+			if err != nil {
+				reconcileWorkerResult(taskDir, p.id, p.pid, &r)
+				if r.status != "" || r.pid != 0 || r.runtime != "" {
+					results = append(results, r)
 				}
+				continue
+			}
+
+			if t.Runtime != "" {
+				r.runtime = t.Runtime
+			}
+			if t.Model != "" {
+				r.model = t.Model
+			}
+			if isTerminalStatus(t.Status) {
+				r.status = t.Status
+				r.duration = t.Duration
+				results = append(results, r)
+				continue
+			}
+			if t.PID > 0 {
+				r.pid = t.PID
+			}
+			pid := p.pid
+			if pid <= 0 {
+				pid = t.PID
+			}
+			if pid > 0 && !task.ProcessAlive(pid) {
+				r.status = "failed"
+				r.duration = t.Duration
+				r.pid = pid
+				r.reap = true
+			}
+			results = append(results, r)
+		}
+		return reconcileMsg(results)
+	}
+}
+
+func (m *Model) applyReconcileResults(results reconcileMsg) {
+	for _, r := range results {
+		ts, ok := m.tasks[r.id]
+		if !ok || isTerminalStatus(ts.Status) {
+			continue
+		}
+		if r.runtime != "" && ts.Runtime == "" {
+			ts.Runtime = r.runtime
+		}
+		if r.model != "" && ts.Model == "" {
+			ts.Model = r.model
+		}
+		if r.pid > 0 && ts.PID <= 0 {
+			ts.PID = r.pid
+		}
+		if r.progress != "" {
+			ts.Progress = r.progress
+		}
+		if r.status != "" {
+			ts.Status = r.status
+			if r.duration != "" {
+				ts.Duration = r.duration
+			}
+		}
+		if r.reap && m.reapCh != nil {
+			select {
+			case m.reapCh <- r.id:
+			default:
 			}
 		}
 	}
@@ -852,11 +927,11 @@ type workerState struct {
 	WorkerPID int    `yaml:"worker_pid"`
 }
 
-func (m *Model) reconcileWorkerState(ts *taskState) {
-	if m.taskDir == "" {
+func reconcileWorkerResult(taskDir, id string, tuiPID int, r *reconcileResult) {
+	if taskDir == "" {
 		return
 	}
-	wsPath := filepath.Join(m.taskDir, ts.ID, "worker-state.yaml")
+	wsPath := filepath.Join(taskDir, id, "worker-state.yaml")
 	data, err := os.ReadFile(wsPath)
 	if err != nil {
 		return
@@ -865,30 +940,27 @@ func (m *Model) reconcileWorkerState(ts *taskState) {
 	if err := yaml.Unmarshal(data, &ws); err != nil {
 		return
 	}
-	if ts.PID <= 0 && ws.WorkerPID > 0 {
-		ts.PID = ws.WorkerPID
+	if ws.WorkerPID > 0 {
+		r.pid = ws.WorkerPID
 	}
 	if ws.PhaseName != "" {
-		ts.Progress = ws.PhaseName
+		r.progress = ws.PhaseName
 	}
-	if ws.Role != "" && ts.Runtime == "" {
-		ts.Runtime = ws.Role
+	if ws.Role != "" {
+		r.runtime = ws.Role
 	}
 
-	// Dead PID → task died mid-work
-	if ts.PID > 0 && !task.ProcessAlive(ts.PID) {
-		// Check if worker finished all phases (state=done)
+	pid := tuiPID
+	if pid <= 0 {
+		pid = ws.WorkerPID
+	}
+	if pid > 0 && !task.ProcessAlive(pid) {
 		if ws.State == "done" || ws.State == "completed" {
-			ts.Status = "completed"
+			r.status = "completed"
 		} else {
-			ts.Status = "failed"
+			r.status = "failed"
 		}
-		if m.reapCh != nil {
-			select {
-			case m.reapCh <- ts.ID:
-			default:
-			}
-		}
+		r.reap = true
 	}
 }
 

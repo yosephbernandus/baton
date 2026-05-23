@@ -9,6 +9,22 @@ import (
 	"github.com/yosephbernandus/baton/internal/task"
 )
 
+// runReconcile simulates the async reconciliation flow:
+// startReconciliation returns a Cmd, we execute it to get results, then apply.
+func runReconcile(m *Model) {
+	cmd := m.startReconciliation()
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	if msg == nil {
+		return
+	}
+	if results, ok := msg.(reconcileMsg); ok {
+		m.applyReconcileResults(results)
+	}
+}
+
 func TestReconcileWithStore(t *testing.T) {
 	dir := t.TempDir()
 	store, err := task.NewStore(dir)
@@ -54,7 +70,7 @@ func TestReconcileWithStore(t *testing.T) {
 		reapCh:    reapCh,
 	}
 
-	m.reconcileWithStore()
+	runReconcile(m)
 
 	tests := []struct {
 		id     string
@@ -63,7 +79,7 @@ func TestReconcileWithStore(t *testing.T) {
 		{"case1", "killed"},
 		{"case2", "completed"},
 		{"case3", "failed"},
-		{"case4", "running"}, // no PID in reconcile → stays running, checkDeadProcesses handles via zombie heuristic
+		{"case4", "running"},
 		{"case5", "killed"},
 		{"case6", "running"},
 	}
@@ -75,29 +91,27 @@ func TestReconcileWithStore(t *testing.T) {
 		}
 	}
 
-	// Case 2 should have duration from store
 	if m.tasks["case2"].Duration != "5m" {
 		t.Errorf("case2: expected duration '5m', got %q", m.tasks["case2"].Duration)
 	}
 
-	// Verify per-task reconciled flag prevents re-check of same task
+	// Per-task reconciled flag prevents re-check
 	m.tasks["case6"].Status = "running"
 	_ = store.Create(&task.Task{ID: "case6", Runtime: "rt", Model: "m", Status: "killed", CreatedAt: now})
-	m.reconcileWithStore()
+	runReconcile(m)
 	if m.tasks["case6"].Status != "running" {
-		t.Error("per-task reconciled flag should prevent re-reconciliation of already-checked task")
+		t.Error("per-task reconciled flag should prevent re-reconciliation")
 	}
 
-	// But NEW tasks added after first reconcile should still get checked
+	// NEW tasks after first reconcile still get checked
 	_ = store.Create(&task.Task{ID: "case7", Runtime: "rt", Model: "m", Status: "completed", Duration: "2m", CreatedAt: now})
 	m.tasks["case7"] = &taskState{ID: "case7", Status: "running"}
 	m.taskOrder = append(m.taskOrder, "case7")
-	m.reconcileWithStore()
+	runReconcile(m)
 	if m.tasks["case7"].Status != "completed" {
-		t.Errorf("case7: new task after first reconcile should be reconciled, got %q", m.tasks["case7"].Status)
+		t.Errorf("case7: new task should be reconciled, got %q", m.tasks["case7"].Status)
 	}
 
-	// Verify reap channel got case3 (dead PID)
 	close(reapCh)
 	var reaped []string
 	for id := range reapCh {
@@ -107,7 +121,6 @@ func TestReconcileWithStore(t *testing.T) {
 		t.Errorf("expected [case3] reaped, got %v", reaped)
 	}
 
-	// Verify case1/case2/case5 are terminal → filtered from active view
 	m.showAll = false
 	visible := m.visibleTasks()
 	for _, id := range visible {
@@ -129,13 +142,24 @@ func TestReconcilePullsRuntimeModel(t *testing.T) {
 		store:     store,
 	}
 
-	m.reconcileWithStore()
+	runReconcile(m)
 
 	if m.tasks["t1"].Runtime != "opencode" {
 		t.Errorf("expected runtime 'opencode', got %q", m.tasks["t1"].Runtime)
 	}
 	if m.tasks["t1"].Model != "kimi" {
 		t.Errorf("expected model 'kimi', got %q", m.tasks["t1"].Model)
+	}
+}
+
+func TestReconcileNoStoreReturnsNil(t *testing.T) {
+	m := &Model{
+		tasks:     map[string]*taskState{"t1": {ID: "t1", Status: "running"}},
+		taskOrder: []string{"t1"},
+	}
+	cmd := m.startReconciliation()
+	if cmd != nil {
+		t.Error("expected nil cmd when store is nil")
 	}
 }
 
@@ -148,16 +172,11 @@ func TestCheckDeadProcessesZombieDetection(t *testing.T) {
 
 	m := &Model{
 		tasks: map[string]*taskState{
-			// Zombie: no PID, started 2h ago, last event 1h ago → should be marked failed
-			"zombie-no-pid": {ID: "zombie-no-pid", Status: "running", StartedAt: oldStart, LastEventAt: oldEvent},
-			// Zombie: PID alive (recycled), started 2h ago, last event 1h ago → should be marked failed
+			"zombie-no-pid":   {ID: "zombie-no-pid", Status: "running", StartedAt: oldStart, LastEventAt: oldEvent},
 			"zombie-recycled": {ID: "zombie-recycled", Status: "running", PID: os.Getpid(), StartedAt: oldStart, LastEventAt: oldEvent},
-			// Alive: PID alive, recent events → should stay running
-			"alive": {ID: "alive", Status: "running", PID: os.Getpid(), StartedAt: now, LastEventAt: now},
-			// Dead PID: PID 99999 → should be marked failed
-			"dead-pid": {ID: "dead-pid", Status: "running", PID: 99999, StartedAt: now, LastEventAt: now},
-			// Completed: should be skipped
-			"completed": {ID: "completed", Status: "completed"},
+			"alive":           {ID: "alive", Status: "running", PID: os.Getpid(), StartedAt: now, LastEventAt: now},
+			"dead-pid":        {ID: "dead-pid", Status: "running", PID: 99999, StartedAt: now, LastEventAt: now},
+			"completed":       {ID: "completed", Status: "completed"},
 		},
 		taskOrder: []string{"zombie-no-pid", "zombie-recycled", "alive", "dead-pid", "completed"},
 		reapCh:    reapCh,
@@ -166,11 +185,11 @@ func TestCheckDeadProcessesZombieDetection(t *testing.T) {
 	m.checkDeadProcesses()
 
 	expects := map[string]string{
-		"zombie-no-pid":  "failed",
+		"zombie-no-pid":   "failed",
 		"zombie-recycled": "failed",
-		"alive":          "running",
-		"dead-pid":       "failed",
-		"completed":      "completed",
+		"alive":           "running",
+		"dead-pid":        "failed",
+		"completed":       "completed",
 	}
 
 	for id, expect := range expects {
@@ -185,7 +204,7 @@ func TestCheckDeadProcessesZombieDetection(t *testing.T) {
 		reaped = append(reaped, id)
 	}
 	if len(reaped) != 3 {
-		t.Errorf("expected 3 reaped (zombie-no-pid, zombie-recycled, dead-pid), got %d: %v", len(reaped), reaped)
+		t.Errorf("expected 3 reaped, got %d: %v", len(reaped), reaped)
 	}
 }
 
@@ -197,15 +216,12 @@ func TestKillEmitsEvent(t *testing.T) {
 	_ = store.Create(&task.Task{ID: "kill-test", Runtime: "rt", Model: "m", Status: "running", CreatedAt: now})
 	_ = store.KillTask("kill-test")
 
-	// Verify YAML updated
 	tk, _ := store.Get("kill-test")
 	if tk.Status != "killed" {
 		t.Errorf("expected killed, got %s", tk.Status)
 	}
 
-	// Simulate what kill.go does: write event
 	_ = filepath.Join(dir, "events.ndjson")
-	// We can't easily test the full cmd flow, but verify the store side works
 	if tk.CompletedAt == nil {
 		t.Error("CompletedAt should be set after kill")
 	}

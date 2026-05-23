@@ -112,7 +112,7 @@ func TestIntegrationFullReconcileFlow(t *testing.T) {
 	t.Log("Pre-reconcile states correct")
 
 	// --- Run reconciliation (first tick) ---
-	m.reconcileWithStore()
+	runReconcile(m)
 
 	postReconcile := map[string]string{
 		"task-A": "completed", // YAML=completed → fixed
