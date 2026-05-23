@@ -754,7 +754,7 @@ func (m *Model) clearStale() {
 func (m *Model) checkDeadProcesses() {
 	for _, id := range m.taskOrder {
 		t := m.tasks[id]
-		if t.Status != "running" {
+		if t.Status != "running" && t.Status != "pending" {
 			continue
 		}
 		if t.PID > 0 && !task.ProcessAlive(t.PID) {
@@ -767,15 +767,18 @@ func (m *Model) checkDeadProcesses() {
 			}
 			continue
 		}
-		// Catch zombie tasks: running >1hr with no events >30min.
-		// Handles PID-recycled processes and tasks without PID.
-		if !t.StartedAt.IsZero() && time.Since(t.StartedAt) > time.Hour &&
-			!t.LastEventAt.IsZero() && time.Since(t.LastEventAt) > 30*time.Minute {
-			t.Status = "failed"
-			if m.reapCh != nil {
-				select {
-				case m.reapCh <- id:
-				default:
+		// Catch zombie tasks: no events for 30min+ and either started 1hr+ ago
+		// or stuck pending 1hr+ (never started). Handles PID-recycled and no-PID cases.
+		if !t.LastEventAt.IsZero() && time.Since(t.LastEventAt) > 30*time.Minute {
+			staleStart := !t.StartedAt.IsZero() && time.Since(t.StartedAt) > time.Hour
+			stalePending := t.Status == "pending" && time.Since(t.LastEventAt) > time.Hour
+			if staleStart || stalePending {
+				t.Status = "failed"
+				if m.reapCh != nil {
+					select {
+					case m.reapCh <- id:
+					default:
+					}
 				}
 			}
 		}
@@ -959,8 +962,8 @@ func reconcileWorkerResult(taskDir, id string, tuiPID int, r *reconcileResult) {
 			r.status = "completed"
 		} else {
 			r.status = "failed"
+			r.reap = true
 		}
-		r.reap = true
 	}
 }
 

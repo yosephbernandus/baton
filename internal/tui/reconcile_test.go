@@ -177,8 +177,10 @@ func TestCheckDeadProcessesZombieDetection(t *testing.T) {
 			"alive":           {ID: "alive", Status: "running", PID: os.Getpid(), StartedAt: now, LastEventAt: now},
 			"dead-pid":        {ID: "dead-pid", Status: "running", PID: 99999, StartedAt: now, LastEventAt: now},
 			"completed":       {ID: "completed", Status: "completed"},
+			"stale-pending":   {ID: "stale-pending", Status: "pending", LastEventAt: oldEvent},
+			"fresh-pending":   {ID: "fresh-pending", Status: "pending", LastEventAt: now},
 		},
-		taskOrder: []string{"zombie-no-pid", "zombie-recycled", "alive", "dead-pid", "completed"},
+		taskOrder: []string{"zombie-no-pid", "zombie-recycled", "alive", "dead-pid", "completed", "stale-pending", "fresh-pending"},
 		reapCh:    reapCh,
 	}
 
@@ -190,6 +192,8 @@ func TestCheckDeadProcessesZombieDetection(t *testing.T) {
 		"alive":           "running",
 		"dead-pid":        "failed",
 		"completed":       "completed",
+		"stale-pending":   "failed",
+		"fresh-pending":   "pending",
 	}
 
 	for id, expect := range expects {
@@ -203,8 +207,8 @@ func TestCheckDeadProcessesZombieDetection(t *testing.T) {
 	for id := range reapCh {
 		reaped = append(reaped, id)
 	}
-	if len(reaped) != 3 {
-		t.Errorf("expected 3 reaped, got %d: %v", len(reaped), reaped)
+	if len(reaped) != 4 {
+		t.Errorf("expected 4 reaped, got %d: %v", len(reaped), reaped)
 	}
 }
 
