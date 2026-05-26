@@ -420,3 +420,146 @@ func TestE2EKillFlowEmitsEventAndReconciles(t *testing.T) {
 
 	t.Log("Kill flow E2E verified")
 }
+
+func TestE2EPipelinePhaseEvents(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := task.NewStore(dir)
+	now := time.Now().UTC()
+
+	m := &Model{
+		tasks:      make(map[string]*taskState),
+		splitRatio: 0.4,
+		store:      store,
+		taskDir:    dir,
+	}
+
+	taskID := "spec-phase-8"
+
+	// Phase started → running
+	m.processEvent(events.Event{
+		Timestamp: now, TaskID: taskID, Runtime: "claude-code", Model: "opus",
+		EventType: "phase_started",
+		Data: map[string]interface{}{"phase_name": "implementation", "role": "developer"},
+	})
+	if m.tasks[taskID].Status != "running" {
+		t.Errorf("phase_started: want running, got %q", m.tasks[taskID].Status)
+	}
+	if m.tasks[taskID].Progress != "implementation" {
+		t.Errorf("phase_started: want progress 'implementation', got %q", m.tasks[taskID].Progress)
+	}
+	if m.tasks[taskID].Runtime != "developer" {
+		t.Errorf("phase_started: want runtime 'developer', got %q", m.tasks[taskID].Runtime)
+	}
+
+	// Phase completed → completed
+	m.processEvent(events.Event{
+		Timestamp: now.Add(time.Minute), TaskID: taskID, Runtime: "claude-code", Model: "opus",
+		EventType: "phase_completed",
+		Data: map[string]interface{}{"phase_name": "implementation"},
+	})
+	if m.tasks[taskID].Status != "completed" {
+		t.Errorf("phase_completed: want completed, got %q", m.tasks[taskID].Status)
+	}
+
+	// Terminal status → reconciliation skips (no need to check store)
+	runReconcile(m)
+
+	// --- RERUN: phase_started resets reconciled + status ---
+	m.processEvent(events.Event{
+		Timestamp: now.Add(2 * time.Minute), TaskID: taskID, Runtime: "claude-code", Model: "opus",
+		EventType: "phase_started",
+		Data: map[string]interface{}{"phase_name": "implementation", "role": "developer"},
+	})
+	if m.tasks[taskID].Status != "running" {
+		t.Errorf("rerun phase_started: want running, got %q", m.tasks[taskID].Status)
+	}
+	if m.tasks[taskID].reconciled {
+		t.Error("phase_started should reset reconciled flag")
+	}
+
+	// Phase failed
+	m.processEvent(events.Event{
+		Timestamp: now.Add(3 * time.Minute), TaskID: taskID,
+		EventType: "phase_failed",
+	})
+	if m.tasks[taskID].Status != "failed" {
+		t.Errorf("phase_failed: want failed, got %q", m.tasks[taskID].Status)
+	}
+
+	// Phase retry resets to running
+	m.processEvent(events.Event{
+		Timestamp: now.Add(4 * time.Minute), TaskID: taskID, Runtime: "claude-code", Model: "opus",
+		EventType: "phase_retry",
+	})
+	if m.tasks[taskID].Status != "running" {
+		t.Errorf("phase_retry: want running, got %q", m.tasks[taskID].Status)
+	}
+	if m.tasks[taskID].reconciled {
+		t.Error("phase_retry should reset reconciled flag")
+	}
+
+	t.Log("Pipeline phase events verified")
+}
+
+func TestE2EPipelineRerunReconcile(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := task.NewStore(dir)
+	now := time.Now().UTC()
+
+	taskID := "myspec-phase-8"
+
+	// First run: task completed in store
+	_ = store.Create(&task.Task{
+		ID: taskID, Runtime: "claude-code", Model: "opus",
+		Status: "completed", Duration: "5m", CreatedAt: now,
+	})
+
+	m := &Model{
+		tasks:      make(map[string]*taskState),
+		splitRatio: 0.4,
+		store:      store,
+		taskDir:    dir,
+	}
+
+	// Simulate event replay: phase completed from first run
+	m.processEvent(events.Event{
+		Timestamp: now, TaskID: taskID, Runtime: "claude-code", Model: "opus",
+		EventType: "phase_completed",
+		Data: map[string]interface{}{"phase_name": "implementation"},
+	})
+
+	// Reconcile picks up completed from store
+	runReconcile(m)
+	if m.tasks[taskID].Status != "completed" {
+		t.Fatalf("first run: want completed, got %q", m.tasks[taskID].Status)
+	}
+
+	// --- Pipeline reruns the same phase ---
+	// Store updates to running
+	tk, _ := store.Get(taskID)
+	tk.Status = "running"
+	tk.CompletedAt = nil
+	_ = store.Update(tk)
+
+	// New phase_started event arrives
+	m.processEvent(events.Event{
+		Timestamp: now.Add(10 * time.Minute), TaskID: taskID, Runtime: "claude-code", Model: "opus",
+		EventType: "phase_started",
+		Data: map[string]interface{}{"phase_name": "implementation", "role": "developer"},
+	})
+
+	if m.tasks[taskID].Status != "running" {
+		t.Errorf("rerun: want running, got %q", m.tasks[taskID].Status)
+	}
+	if m.tasks[taskID].reconciled {
+		t.Error("phase_started should have reset reconciled flag")
+	}
+
+	// Reconcile should now see running in store (not completed)
+	runReconcile(m)
+	if m.tasks[taskID].Status != "running" {
+		t.Errorf("rerun reconcile: want running, got %q", m.tasks[taskID].Status)
+	}
+
+	t.Log("Pipeline rerun reconcile verified")
+}

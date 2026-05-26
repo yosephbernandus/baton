@@ -483,6 +483,7 @@ func (m *Model) processEvent(ev events.Event) {
 	case "task_started", "worker_started":
 		t.Status = "running"
 		t.StartedAt = ev.Timestamp
+		t.reconciled = false
 		if ev.Data != nil {
 			if pid, ok := ev.Data["pid"].(float64); ok && pid > 0 {
 				t.PID = int(pid)
@@ -539,6 +540,31 @@ func (m *Model) processEvent(ev events.Event) {
 		t.Status = "pending"
 	case "task_redispatched":
 		t.Status = "running"
+		t.reconciled = false
+	case "phase_started":
+		t.Status = "running"
+		t.StartedAt = ev.Timestamp
+		t.reconciled = false
+		if ev.Data != nil {
+			if name, ok := ev.Data["phase_name"].(string); ok {
+				t.Progress = name
+			}
+			if role, ok := ev.Data["role"].(string); ok {
+				t.Runtime = role
+			}
+		}
+	case "phase_completed":
+		t.Status = "completed"
+		if ev.Data != nil {
+			if name, ok := ev.Data["phase_name"].(string); ok {
+				t.Progress = name
+			}
+		}
+	case "phase_failed":
+		t.Status = "failed"
+	case "phase_retry":
+		t.Status = "running"
+		t.reconciled = false
 	case "phase_advanced":
 		if name, ok := ev.Data["phase_name"].(string); ok {
 			t.Progress = name
