@@ -565,6 +565,30 @@ func (m *Model) processEvent(ev events.Event) {
 	case "phase_retry":
 		t.Status = "running"
 		t.reconciled = false
+	case "phase_stuck", "phase_blocked":
+		t.Stuck = true
+		if ev.Data != nil {
+			if name, ok := ev.Data["phase_name"].(string); ok {
+				t.Progress = name
+			}
+		}
+	case "phase_rate_limited":
+		t.Progress = "rate limited"
+		t.Stuck = true
+	case "phase_budget_exceeded":
+		t.Status = "failed"
+		t.Progress = "budget exceeded"
+	case "phase_boundary_violation":
+		if ev.Data != nil {
+			if name, ok := ev.Data["phase_name"].(string); ok {
+				t.Progress = name + " (violation)"
+			}
+		}
+	case "advisor_consulted":
+		t.Progress = "consulting advisor"
+	case "l2_loop_back":
+		t.Progress = "L2 loop back"
+		t.reconciled = false
 	case "phase_advanced":
 		if name, ok := ev.Data["phase_name"].(string); ok {
 			t.Progress = name

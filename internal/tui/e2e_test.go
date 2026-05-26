@@ -563,3 +563,187 @@ func TestE2EPipelineRerunReconcile(t *testing.T) {
 
 	t.Log("Pipeline rerun reconcile verified")
 }
+
+func TestE2EPipeline16PhaseFullCycle(t *testing.T) {
+	m := &Model{
+		tasks:      make(map[string]*taskState),
+		splitRatio: 0.4,
+	}
+
+	specID := "theme-editor-standards-cleanup"
+	now := time.Now().UTC()
+
+	phases := []struct {
+		id   int
+		name string
+		role string
+	}{
+		{1, "setup", "lead"},
+		{2, "triage", "lead"},
+		{3, "discovery", "lead"},
+		{4, "skill_discovery", "lead"},
+		{6, "brainstorming", "lead"},
+		{7, "architecture", "lead"},
+		{8, "implementation", "developer"},
+		{9, "design_verification", "reviewer"},
+		{10, "domain_compliance", "reviewer"},
+		{11, "code_quality", "reviewer"},
+		{12, "test_planning", "test_lead"},
+		{13, "testing", "tester"},
+		{14, "coverage_verification", "tester"},
+		{15, "test_quality", "reviewer"},
+		{16, "completion", "lead"},
+	}
+
+	// Simulate full pipeline run: each phase gets task_started + phase_started + phase_completed + task_completed
+	for i, ph := range phases {
+		taskID := fmt.Sprintf("%s-phase-%d", specID, ph.id)
+		ts := now.Add(time.Duration(i) * time.Minute)
+
+		// Runner emits task_started
+		m.processEvent(events.Event{
+			Timestamp: ts, TaskID: taskID, Runtime: "claude-code", Model: "opus",
+			EventType: "task_started", Data: map[string]interface{}{"attempt": float64(1)},
+		})
+
+		// Pipeline emits phase_started
+		m.processEvent(events.Event{
+			Timestamp: ts.Add(time.Second), TaskID: taskID, Runtime: "claude-code", Model: "opus",
+			EventType: "phase_started",
+			Data: map[string]interface{}{"phase_name": ph.name, "role": ph.role},
+		})
+
+		if m.tasks[taskID].Status != "running" {
+			t.Errorf("phase %d (%s): want running after start, got %q", ph.id, ph.name, m.tasks[taskID].Status)
+		}
+		if m.tasks[taskID].Progress != ph.name {
+			t.Errorf("phase %d: want progress %q, got %q", ph.id, ph.name, m.tasks[taskID].Progress)
+		}
+
+		// Pipeline emits phase_completed
+		m.processEvent(events.Event{
+			Timestamp: ts.Add(30 * time.Second), TaskID: taskID, Runtime: "claude-code", Model: "opus",
+			EventType: "phase_completed",
+			Data: map[string]interface{}{"phase_name": ph.name},
+		})
+
+		// Runner emits task_completed
+		m.processEvent(events.Event{
+			Timestamp: ts.Add(31 * time.Second), TaskID: taskID, Runtime: "claude-code", Model: "opus",
+			EventType: "task_completed",
+			Data: map[string]interface{}{"duration": "30s", "exit_code": float64(0)},
+		})
+
+		if m.tasks[taskID].Status != "completed" {
+			t.Errorf("phase %d (%s): want completed, got %q", ph.id, ph.name, m.tasks[taskID].Status)
+		}
+	}
+
+	// All 15 phases completed (5 skipped for MEDIUM = phases 5,6...wait, let me use all 15)
+	if len(m.tasks) != len(phases) {
+		t.Errorf("want %d tasks, got %d", len(phases), len(m.tasks))
+	}
+
+	// Active view should show nothing (all completed)
+	m.showAll = false
+	active := m.visibleTasks()
+	if len(active) != 0 {
+		t.Errorf("all completed, active view should be empty, got %d", len(active))
+	}
+
+	// All view shows all
+	m.showAll = true
+	all := m.visibleTasks()
+	if len(all) != len(phases) {
+		t.Errorf("all view: want %d, got %d", len(phases), len(all))
+	}
+
+	// --- Simulate L1 retry on phase 8 (implementation) ---
+	retryTaskID := fmt.Sprintf("%s-phase-8", specID)
+	retryTime := now.Add(20 * time.Minute)
+
+	// phase_retry event
+	m.processEvent(events.Event{
+		Timestamp: retryTime, TaskID: retryTaskID, Runtime: "claude-code", Model: "opus",
+		EventType: "phase_retry",
+		Data: map[string]interface{}{"phase_name": "implementation", "attempt": float64(2)},
+	})
+	if m.tasks[retryTaskID].Status != "running" {
+		t.Errorf("retry: want running, got %q", m.tasks[retryTaskID].Status)
+	}
+	if m.tasks[retryTaskID].reconciled {
+		t.Error("retry should reset reconciled flag")
+	}
+
+	// retry completes
+	m.processEvent(events.Event{
+		Timestamp: retryTime.Add(time.Minute), TaskID: retryTaskID,
+		EventType: "phase_completed",
+		Data: map[string]interface{}{"phase_name": "implementation"},
+	})
+	m.processEvent(events.Event{
+		Timestamp: retryTime.Add(61 * time.Second), TaskID: retryTaskID, Runtime: "claude-code", Model: "opus",
+		EventType: "task_completed",
+		Data: map[string]interface{}{"duration": "1m", "exit_code": float64(0)},
+	})
+	if m.tasks[retryTaskID].Status != "completed" {
+		t.Errorf("retry complete: want completed, got %q", m.tasks[retryTaskID].Status)
+	}
+
+	// --- Simulate phase_stuck then recovery ---
+	stuckTaskID := fmt.Sprintf("%s-phase-11", specID)
+	m.processEvent(events.Event{
+		Timestamp: retryTime.Add(2 * time.Minute), TaskID: stuckTaskID,
+		EventType: "phase_started",
+		Data: map[string]interface{}{"phase_name": "code_quality", "role": "reviewer"},
+	})
+	m.processEvent(events.Event{
+		Timestamp: retryTime.Add(3 * time.Minute), TaskID: stuckTaskID,
+		EventType: "phase_stuck",
+		Data: map[string]interface{}{"phase_name": "code_quality"},
+	})
+	if !m.tasks[stuckTaskID].Stuck {
+		t.Error("phase_stuck should set Stuck flag")
+	}
+
+	// Recovers with phase_completed
+	m.processEvent(events.Event{
+		Timestamp: retryTime.Add(5 * time.Minute), TaskID: stuckTaskID,
+		EventType: "phase_completed",
+		Data: map[string]interface{}{"phase_name": "code_quality"},
+	})
+	if m.tasks[stuckTaskID].Status != "completed" {
+		t.Errorf("stuck recovery: want completed, got %q", m.tasks[stuckTaskID].Status)
+	}
+
+	// --- Simulate phase_rate_limited ---
+	rlTaskID := fmt.Sprintf("%s-phase-13", specID)
+	m.processEvent(events.Event{
+		Timestamp: retryTime.Add(6 * time.Minute), TaskID: rlTaskID,
+		EventType: "phase_started",
+		Data: map[string]interface{}{"phase_name": "testing", "role": "tester"},
+	})
+	m.processEvent(events.Event{
+		Timestamp: retryTime.Add(7 * time.Minute), TaskID: rlTaskID,
+		EventType: "phase_rate_limited",
+	})
+	if !m.tasks[rlTaskID].Stuck {
+		t.Error("phase_rate_limited should set Stuck flag")
+	}
+	if m.tasks[rlTaskID].Progress != "rate limited" {
+		t.Errorf("rate limited progress: want 'rate limited', got %q", m.tasks[rlTaskID].Progress)
+	}
+
+	// --- Simulate L2 loop back ---
+	l2TaskID := fmt.Sprintf("%s-l2-cycle-1", specID)
+	m.processEvent(events.Event{
+		Timestamp: retryTime.Add(8 * time.Minute), TaskID: l2TaskID,
+		EventType: "l2_loop_back",
+		Data: map[string]interface{}{"cycle": float64(1), "failed_phase_name": "testing"},
+	})
+	if m.tasks[l2TaskID].Progress != "L2 loop back" {
+		t.Errorf("l2 loop: want progress 'L2 loop back', got %q", m.tasks[l2TaskID].Progress)
+	}
+
+	t.Logf("Full 16-phase pipeline test passed (%d phase tasks + L2)", len(phases))
+}
