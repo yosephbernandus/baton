@@ -566,6 +566,9 @@ func (m *Model) processEvent(ev events.Event) {
 		t.Status = "running"
 		t.reconciled = false
 	case "phase_stuck", "phase_blocked":
+		if t.Status == "" {
+			t.Status = "running"
+		}
 		t.Stuck = true
 		if ev.Data != nil {
 			if name, ok := ev.Data["phase_name"].(string); ok {
@@ -573,20 +576,32 @@ func (m *Model) processEvent(ev events.Event) {
 			}
 		}
 	case "phase_rate_limited":
+		if t.Status == "" {
+			t.Status = "running"
+		}
 		t.Progress = "rate limited"
 		t.Stuck = true
 	case "phase_budget_exceeded":
 		t.Status = "failed"
 		t.Progress = "budget exceeded"
 	case "phase_boundary_violation":
+		if t.Status == "" {
+			t.Status = "running"
+		}
 		if ev.Data != nil {
 			if name, ok := ev.Data["phase_name"].(string); ok {
 				t.Progress = name + " (violation)"
 			}
 		}
 	case "advisor_consulted":
+		if t.Status == "" {
+			t.Status = "running"
+		}
 		t.Progress = "consulting advisor"
 	case "l2_loop_back":
+		if t.Status == "" {
+			t.Status = "running"
+		}
 		t.Progress = "L2 loop back"
 		t.reconciled = false
 	case "phase_advanced":
