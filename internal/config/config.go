@@ -22,9 +22,12 @@ type Config struct {
 	SpecDir         string                     `yaml:"spec_dir"`
 	LockFile        string                     `yaml:"lock_file"`
 	ProjectBrief    string                     `yaml:"project_brief"`
-	AbsoluteTimeout string                     `yaml:"default_timeout"` // yaml tag kept as default_timeout for backward compat
-	SilenceTimeout  string                     `yaml:"silence_timeout"`
-	SilenceWarning  string                     `yaml:"silence_warning"`
+	AbsoluteTimeout    string                     `yaml:"default_timeout"` // yaml tag kept as default_timeout for backward compat
+	SilenceTimeout     string                     `yaml:"silence_timeout"`
+	SilenceWarning     string                     `yaml:"silence_warning"`
+	StartupTimeout     string                     `yaml:"startup_timeout"`
+	NetworkIdleTimeout string                     `yaml:"network_idle_timeout"`
+	AttemptTimeout     string                     `yaml:"attempt_timeout"`
 	OutputTailLines int                        `yaml:"output_tail_lines"`
 	PhaseMachine    PhaseMachineConfig         `yaml:"phase_machine"`
 	RoleModels      map[string]RoleModelConfig `yaml:"role_models"`

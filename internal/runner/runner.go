@@ -29,10 +29,13 @@ const (
 
 // LivenessConfig controls how the runner detects and handles unresponsive workers.
 type LivenessConfig struct {
-	SilenceTimeout  time.Duration
-	AbsoluteTimeout time.Duration
-	SilenceWarning  time.Duration
-	TickInterval    time.Duration // how often watchdog checks; 0 defaults to 30s
+	SilenceTimeout     time.Duration
+	AbsoluteTimeout    time.Duration
+	SilenceWarning     time.Duration
+	StartupTimeout     time.Duration
+	NetworkIdleTimeout time.Duration
+	AttemptTimeout     time.Duration
+	TickInterval       time.Duration // how often watchdog checks; 0 defaults to 30s
 }
 
 type Result struct {
@@ -135,7 +138,8 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 
 	lastActivity.Store(time.Now().UnixMilli())
 
-	// Watchdog goroutine: checks silence and absolute deadline.
+	// Watchdog goroutine: 5-level timeout hierarchy.
+	// StartupTimeout → NetworkIdleTimeout → HeartbeatTimeout(SilenceTimeout) → AttemptTimeout → AbsoluteTimeout
 	go func() {
 		tickInterval := liveness.TickInterval
 		if tickInterval <= 0 {
@@ -143,11 +147,43 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		}
 		ticker := time.NewTicker(tickInterval)
 		defer ticker.Stop()
-		absoluteTimer := time.NewTimer(liveness.AbsoluteTimeout)
+
+		absoluteTimeout := liveness.AbsoluteTimeout
+		if absoluteTimeout <= 0 {
+			absoluteTimeout = 2 * time.Hour
+		}
+		absoluteTimer := time.NewTimer(absoluteTimeout)
 		defer absoluteTimer.Stop()
+
+		attemptTimeout := liveness.AttemptTimeout
+		var attemptTimer *time.Timer
+		if attemptTimeout > 0 {
+			attemptTimer = time.NewTimer(attemptTimeout)
+			defer attemptTimer.Stop()
+		}
+
+		startupTimeout := liveness.StartupTimeout
+		if startupTimeout <= 0 {
+			startupTimeout = 2 * time.Minute
+		}
+		networkIdleTimeout := liveness.NetworkIdleTimeout
+		if networkIdleTimeout <= 0 {
+			networkIdleTimeout = 2 * time.Minute
+		}
+
 		warned := false
+		startupDone := false
+		pid := 0
+		if cmd.Process != nil {
+			pid = cmd.Process.Pid
+		}
 
 		for {
+			var attemptCh <-chan time.Time
+			if attemptTimer != nil {
+				attemptCh = attemptTimer.C
+			}
+
 			select {
 			case <-innerCtx.Done():
 				return
@@ -158,17 +194,55 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 				cancelReason.Store(cancelAbsoluteTimeout)
 				cancel()
 				return
+			case <-attemptCh:
+				_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "worker_timeout", map[string]interface{}{
+					"reason": "attempt_timeout",
+				})
+				cancelReason.Store(cancelAbsoluteTimeout)
+				cancel()
+				return
 			case <-ticker.C:
-				if !protocolAware.Load() {
-					// Non-protocol workers rely on absolute_timeout only.
-					continue
-				}
-				if isStuck.Load() {
-					// Worker explicitly waiting for guidance — don't kill.
-					continue
-				}
 				last := time.UnixMilli(lastActivity.Load())
 				silence := time.Since(last)
+
+				if !startupDone {
+					if lastActivity.Load() > time.Now().Add(-1*time.Second).UnixMilli() {
+						startupDone = true
+					} else if silence >= startupTimeout {
+						_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "worker_timeout", map[string]interface{}{
+							"reason": "startup_timeout",
+						})
+						cancelReason.Store(cancelSilenceTimeout)
+						cancel()
+						return
+					}
+					continue
+				}
+
+				if isStuck.Load() {
+					continue
+				}
+
+				if pid > 0 && checkNetworkActivity(pid) {
+					if warned {
+						warned = false
+					}
+					continue
+				}
+
+				if !protocolAware.Load() {
+					if silence >= networkIdleTimeout {
+						_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "worker_killed", map[string]interface{}{
+							"reason":  "network_idle_timeout",
+							"silence": silence.Round(time.Second).String(),
+						})
+						cancelReason.Store(cancelSilenceTimeout)
+						cancel()
+						return
+					}
+					continue
+				}
+
 				if silence >= liveness.SilenceTimeout {
 					_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "worker_killed", map[string]interface{}{
 						"reason":  "silence_timeout",

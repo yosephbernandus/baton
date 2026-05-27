@@ -888,6 +888,15 @@ func (p *Pipeline) buildLiveness() runner.LivenessConfig {
 	if d, err := time.ParseDuration(p.cfg.SilenceWarning); err == nil {
 		lc.SilenceWarning = d
 	}
+	if d, err := time.ParseDuration(p.cfg.StartupTimeout); err == nil {
+		lc.StartupTimeout = d
+	}
+	if d, err := time.ParseDuration(p.cfg.NetworkIdleTimeout); err == nil {
+		lc.NetworkIdleTimeout = d
+	}
+	if d, err := time.ParseDuration(p.cfg.AttemptTimeout); err == nil {
+		lc.AttemptTimeout = d
+	}
 	return lc
 }
 
