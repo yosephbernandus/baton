@@ -19,6 +19,8 @@ type Manifest struct {
 	GitHead             string        `yaml:"git_head,omitempty"`
 	SpecCoreHash        string        `yaml:"spec_core_hash,omitempty"`
 	WorkerPID           int           `yaml:"worker_pid,omitempty"`
+	CoordinatorPID      int           `yaml:"coordinator_pid,omitempty"`
+	LastCommandAt       time.Time     `yaml:"last_command_at,omitempty"`
 	ResumeCount         int           `yaml:"resume_count"`
 	PhaseResumeAttempts map[int]int   `yaml:"phase_resume_attempts,omitempty"`
 	Pipeline            PipelineState `yaml:"pipeline"`

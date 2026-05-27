@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 	"github.com/yosephbernandus/baton/internal/config"
 	"github.com/yosephbernandus/baton/internal/events"
+	"github.com/yosephbernandus/baton/internal/session"
 	"github.com/yosephbernandus/baton/internal/task"
 	"github.com/yosephbernandus/baton/internal/tui"
 )
@@ -73,6 +76,12 @@ func NewMonitorCmd() *cobra.Command {
 					}
 				}
 			}()
+
+			wdCtx, wdCancel := context.WithCancel(context.Background())
+			defer wdCancel()
+			sessionsDir := filepath.Join(filepath.Dir(cfg.TaskDir), "sessions")
+			wd := session.NewWatchdog(cfg.EventLog, sessionsDir, 0, emitter)
+			go wd.Run(wdCtx)
 
 			p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 			if _, err := p.Run(); err != nil {
