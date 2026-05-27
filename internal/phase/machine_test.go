@@ -369,13 +369,15 @@ func TestPipelineL2LoopBack(t *testing.T) {
 		{Status: "completed", Output: []string{"BATON:C:triage:done"}},
 		{Status: "completed", Output: []string{"BATON:C:discovery:done"}},
 		{Status: "completed", Output: []string{"BATON:C:skill_discovery:done"}},
-		{Status: "completed", Output: []string{"BATON:C:implementation:done"}},
+		{Status: "completed", Output: []string{"BATON:C:implementation:done"},
+			FilesChanged: []string{"main.go"}},
 		// domain_compliance fails
 		{Status: "completed", Output: []string{"BATON:C:domain_compliance:fail:naming violation"}},
 		{Status: "completed", Output: []string{"BATON:C:domain_compliance:fail:naming violation"}},
 		{Status: "completed", Output: []string{"BATON:C:domain_compliance:fail:naming violation"}},
 		// L2 loop back to implementation
-		{Status: "completed", Output: []string{"BATON:C:implementation:done"}},
+		{Status: "completed", Output: []string{"BATON:C:implementation:done"},
+			FilesChanged: []string{"main.go"}},
 		// domain_compliance passes
 		{Status: "completed", Output: []string{"BATON:C:domain_compliance:done"}},
 		{Status: "completed", Output: []string{"BATON:C:test_planning:done"}},
@@ -424,8 +426,9 @@ func TestPipelineL2Exhausted(t *testing.T) {
 	for cycle := 0; cycle < 3; cycle++ {
 		// implementation passes
 		results = append(results, &runner.Result{
-			Status: "completed",
-			Output: []string{"BATON:C:implementation:done"},
+			Status:       "completed",
+			Output:       []string{"BATON:C:implementation:done"},
+			FilesChanged: []string{"main.go"},
 		})
 		errs = append(errs, nil)
 		// domain_compliance passes
@@ -452,8 +455,9 @@ func TestPipelineL2Exhausted(t *testing.T) {
 
 	// One more impl + review + test fail after L2 exhausted
 	results = append(results, &runner.Result{
-		Status: "completed",
-		Output: []string{"BATON:C:implementation:done"},
+		Status:       "completed",
+		Output:       []string{"BATON:C:implementation:done"},
+		FilesChanged: []string{"main.go"},
 	})
 	errs = append(errs, nil)
 	results = append(results, &runner.Result{
@@ -555,8 +559,9 @@ func TestPipelineBoundaryViolationRetry(t *testing.T) {
 
 	// Implementation passes
 	results = append(results, &runner.Result{
-		Status: "completed",
-		Output: []string{"BATON:C:implementation:done"},
+		Status:       "completed",
+		Output:       []string{"BATON:C:implementation:done"},
+		FilesChanged: []string{"internal/config/config.go"},
 	})
 	errs = append(errs, nil)
 
@@ -617,8 +622,16 @@ func TestPipelineBoundaryViolationTester(t *testing.T) {
 		errs = append(errs, nil)
 	}
 
-	// Impl, domain_compliance, test_planning pass
-	for _, name := range []string{"implementation", "domain_compliance", "test_planning"} {
+	// Implementation passes with file changes
+	results = append(results, &runner.Result{
+		Status:       "completed",
+		Output:       []string{"BATON:C:implementation:done"},
+		FilesChanged: []string{"internal/phase/machine.go"},
+	})
+	errs = append(errs, nil)
+
+	// domain_compliance, test_planning pass
+	for _, name := range []string{"domain_compliance", "test_planning"} {
 		results = append(results, &runner.Result{
 			Status: "completed",
 			Output: []string{fmt.Sprintf("BATON:C:%s:done", name)},
@@ -996,6 +1009,232 @@ func TestSkillContextEmptyWhenNoDomain(t *testing.T) {
 	}
 	if strings.Contains(mr.prompts[0], "DOMAIN CONTEXT") {
 		t.Error("should not inject domain context when no domain")
+	}
+}
+
+func TestPipelineDirtyBitSkipsVerification(t *testing.T) {
+	// Implementation produces no file changes → verification/testing phases skipped
+	// SMALL active phases: 1,2,3,4,8,10,12,13,14,15,16
+	mr := &mockRunner{
+		results: []*runner.Result{
+			{Status: "completed", Output: []string{"BATON:C:setup:done"}},
+			{Status: "completed", Output: []string{"BATON:C:triage:done"}},
+			{Status: "completed", Output: []string{"BATON:C:discovery:done"}},
+			{Status: "completed", Output: []string{"BATON:C:skill_discovery:done"}},
+			// Implementation: no FilesChanged
+			{Status: "completed", Output: []string{"BATON:C:implementation:done"}},
+			// Phases 10,12,13,14,15 dirty-bit-skipped → straight to completion
+			{Status: "completed", Output: []string{"BATON:C:completion:done"}},
+		},
+		errors: make([]error, 6),
+	}
+
+	cfg := testConfig(0)
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexitySmall})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed. Reason: %s", result.Status, result.FailReason)
+	}
+	if mr.calls != 6 {
+		t.Errorf("runner calls=%d, want 6 (dirty bit skip should skip verification)", mr.calls)
+	}
+	if len(result.DirtyBitSkips) != 5 {
+		t.Errorf("dirty bit skips=%d, want 5 (phases 10,12,13,14,15)", len(result.DirtyBitSkips))
+	}
+	expectedSkips := map[int]bool{10: true, 12: true, 13: true, 14: true, 15: true}
+	for _, skip := range result.DirtyBitSkips {
+		if !expectedSkips[skip] {
+			t.Errorf("unexpected dirty bit skip for phase %d", skip)
+		}
+	}
+}
+
+func TestPipelineDirtyBitNoSkipWithChanges(t *testing.T) {
+	// Implementation produces file changes → verification runs normally
+	// SMALL active: 1,2,3,4,8,10,12,13,14,15,16
+	mr := &mockRunner{
+		results: []*runner.Result{
+			{Status: "completed", Output: []string{"BATON:C:setup:done"}},
+			{Status: "completed", Output: []string{"BATON:C:triage:done"}},
+			{Status: "completed", Output: []string{"BATON:C:discovery:done"}},
+			{Status: "completed", Output: []string{"BATON:C:skill_discovery:done"}},
+			{Status: "completed", Output: []string{"BATON:C:implementation:done"},
+				FilesChanged: []string{"main.go"}},
+			{Status: "completed", Output: []string{"BATON:C:domain_compliance:done"}},
+			{Status: "completed", Output: []string{"BATON:C:test_planning:done"}},
+			{Status: "completed", Output: []string{"BATON:C:testing:done"}},
+			{Status: "completed", Output: []string{"BATON:C:coverage_verification:done"}},
+			{Status: "completed", Output: []string{"BATON:C:test_quality:done"}},
+			{Status: "completed", Output: []string{"BATON:C:completion:done"}},
+		},
+		errors: make([]error, 11),
+	}
+
+	cfg := testConfig(0)
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexitySmall})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed. Reason: %s", result.Status, result.FailReason)
+	}
+	if mr.calls != 11 {
+		t.Errorf("runner calls=%d, want 11 (all phases should run)", mr.calls)
+	}
+	if len(result.DirtyBitSkips) != 0 {
+		t.Errorf("dirty bit skips=%d, want 0", len(result.DirtyBitSkips))
+	}
+}
+
+func TestPipelineDirtyBitNoSkipDuringL2(t *testing.T) {
+	// L2 cycle: re-implementation with no changes should NOT dirty-bit-skip
+	// verification (we need verification to detect if issue was resolved)
+	allResults := []*runner.Result{
+		{Status: "completed", Output: []string{"BATON:C:setup:done"}},
+		{Status: "completed", Output: []string{"BATON:C:triage:done"}},
+		{Status: "completed", Output: []string{"BATON:C:discovery:done"}},
+		{Status: "completed", Output: []string{"BATON:C:skill_discovery:done"}},
+		{Status: "completed", Output: []string{"BATON:C:implementation:done"},
+			FilesChanged: []string{"main.go"}},
+		// domain_compliance fails → L2 loop
+		{Status: "completed", Output: []string{"BATON:C:domain_compliance:fail:style violation"}},
+		{Status: "completed", Output: []string{"BATON:C:domain_compliance:fail:style violation"}},
+		{Status: "completed", Output: []string{"BATON:C:domain_compliance:fail:style violation"}},
+		// L2 loop: re-implementation (no new changes)
+		{Status: "completed", Output: []string{"BATON:C:implementation:done"}},
+		// Should still run domain_compliance (not dirty-bit-skipped)
+		{Status: "completed", Output: []string{"BATON:C:domain_compliance:done"}},
+		{Status: "completed", Output: []string{"BATON:C:test_planning:done"}},
+		{Status: "completed", Output: []string{"BATON:C:testing:done"}},
+		{Status: "completed", Output: []string{"BATON:C:coverage_verification:done"}},
+		{Status: "completed", Output: []string{"BATON:C:test_quality:done"}},
+		{Status: "completed", Output: []string{"BATON:C:completion:done"}},
+	}
+	mr := &mockRunner{
+		results: allResults,
+		errors:  make([]error, len(allResults)),
+	}
+
+	cfg := testConfig(2)
+	cfg.PhaseMachine.MaxL2Cycles = 2
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexitySmall})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed. Reason: %s", result.Status, result.FailReason)
+	}
+	if result.L2Cycles != 1 {
+		t.Errorf("L2Cycles=%d, want 1", result.L2Cycles)
+	}
+	// During L2, dirty bit skip should NOT activate
+	for _, skip := range result.DirtyBitSkips {
+		if skip == 10 {
+			t.Error("domain_compliance should not be dirty-bit-skipped during L2")
+		}
+	}
+}
+
+func TestPipelineDirtyBitDisabled(t *testing.T) {
+	// Dirty bit disabled → all phases run even with no changes
+	mr := &mockRunner{
+		results: []*runner.Result{
+			{Status: "completed", Output: []string{"BATON:C:setup:done"}},
+			{Status: "completed", Output: []string{"BATON:C:implementation:done"}},
+			{Status: "completed", Output: []string{"BATON:C:completion:done"}},
+		},
+		errors: make([]error, 3),
+	}
+
+	cfg := testConfig(0)
+	cfg.TaskDir = t.TempDir()
+	disabled := false
+	cfg.PhaseMachine.DirtyBitSkipEnabled = &disabled
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexityTrivial})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed", result.Status)
+	}
+	if len(result.DirtyBitSkips) != 0 {
+		t.Error("dirty bit skips should be empty when disabled")
+	}
+}
+
+func TestPipelineCompactionGateTriggered(t *testing.T) {
+	// Very low token budget forces compaction at gate phases
+	mr := &mockRunner{
+		results: []*runner.Result{
+			{Status: "completed", Output: []string{"BATON:C:setup:done"}},
+			{Status: "completed", Output: []string{"BATON:C:triage:done"}},
+			{Status: "completed", Output: []string{"BATON:C:discovery:done"}},
+			{Status: "completed", Output: []string{"BATON:C:skill_discovery:done"}},
+			{Status: "completed", Output: []string{"BATON:C:implementation:done"},
+				FilesChanged: []string{"main.go"}},
+			{Status: "completed", Output: []string{"BATON:C:domain_compliance:done"}},
+			{Status: "completed", Output: []string{"BATON:C:test_planning:done"}},
+			{Status: "completed", Output: []string{"BATON:C:testing:done"}},
+			{Status: "completed", Output: []string{"BATON:C:coverage_verification:done"}},
+			{Status: "completed", Output: []string{"BATON:C:test_quality:done"}},
+			{Status: "completed", Output: []string{"BATON:C:completion:done"}},
+		},
+		errors: make([]error, 11),
+	}
+
+	cfg := testConfig(0)
+	cfg.TaskDir = t.TempDir()
+	cfg.PhaseMachine.ContextBudgetTokens = 10
+	cfg.PhaseMachine.CompactionGateThreshold = 0.5
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexitySmall})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed. Reason: %s", result.Status, result.FailReason)
+	}
+	if result.Compactions == 0 {
+		t.Error("expected at least one compaction event with very low budget")
+	}
+}
+
+func TestPipelineCompactionGateNotTriggered(t *testing.T) {
+	// High budget → no compaction
+	mr := &mockRunner{
+		results: []*runner.Result{
+			{Status: "completed", Output: []string{"BATON:C:setup:done"}},
+			{Status: "completed", Output: []string{"BATON:C:implementation:done"}},
+			{Status: "completed", Output: []string{"BATON:C:completion:done"}},
+		},
+		errors: make([]error, 3),
+	}
+
+	cfg := testConfig(0)
+	cfg.TaskDir = t.TempDir()
+	cfg.PhaseMachine.ContextBudgetTokens = 999999
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexityTrivial})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Compactions != 0 {
+		t.Errorf("compactions=%d, want 0 with high budget", result.Compactions)
 	}
 }
 

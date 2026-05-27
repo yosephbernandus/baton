@@ -36,6 +36,13 @@ type Config struct {
 	Feedback        FeedbackConfig             `yaml:"feedback"`
 	Annealing       AnnealingConfig            `yaml:"annealing"`
 	WorkerProtocol  WorkerProtocolConfig       `yaml:"worker_protocol"`
+	Dispatch        DispatchConfig             `yaml:"dispatch"`
+}
+
+type DispatchConfig struct {
+	DefaultMode        string `yaml:"default_mode"`
+	PipelineThreshold  string `yaml:"pipeline_threshold"`
+	CoordinatorOutput  string `yaml:"coordinator_output"`
 }
 
 type AdvisorConfig struct {
@@ -103,6 +110,11 @@ type PhaseMachineConfig struct {
 	RateLimitBaseWaitMs  int     `yaml:"rate_limit_base_wait_ms"`
 	RateLimitMaxWaitMs   int     `yaml:"rate_limit_max_wait_ms"`
 	L2CooldownMs         int     `yaml:"l2_cooldown_ms"`
+	CompactionEnabled       *bool   `yaml:"compaction_enabled,omitempty"`
+	CompactionGateThreshold float64 `yaml:"compaction_gate_threshold"`
+	CompactionGatePhases    []int   `yaml:"compaction_gate_phases"`
+	ContextBudgetTokens     int     `yaml:"context_budget_tokens"`
+	DirtyBitSkipEnabled     *bool   `yaml:"dirty_bit_skip_enabled,omitempty"`
 }
 
 type RoleModelConfig struct {

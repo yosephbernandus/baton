@@ -42,20 +42,23 @@ type PipelineResult struct {
 	AttemptsByPhase map[int]int
 	L2Cycles        int
 	DirtyFiles      map[int][]string // phase ID → files changed
+	DirtyBitSkips   []int            // phase IDs skipped due to no upstream changes
+	Compactions     int              // number of compaction gate activations
 }
 
 type Pipeline struct {
-	config          PipelineConfig
-	phases          []Phase
-	runner          PhaseRunner
-	cfg             *config.Config
-	spec            *spec.Spec
-	store           *task.Store
-	emitter         *events.Emitter
-	specID          string
-	manifest        *session.Manifest
-	manifestPath    string
-	advisor         *advisor.Advisor
+	config           PipelineConfig
+	phases           []Phase
+	runner           PhaseRunner
+	cfg              *config.Config
+	spec             *spec.Spec
+	store            *task.Store
+	emitter          *events.Emitter
+	specID           string
+	manifest         *session.Manifest
+	manifestPath     string
+	advisor          *advisor.Advisor
+	compactionGate   *CompactionGate
 	resumeFromPhase  int
 	resumeBriefing   string
 	lastPhaseNotes   []string
@@ -115,6 +118,14 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 		p.saveManifest()
 	}
 
+	if p.cfg.PhaseMachine.CompactionEnabled == nil || *p.cfg.PhaseMachine.CompactionEnabled {
+		p.compactionGate = NewCompactionGate(
+			p.cfg.PhaseMachine.CompactionGateThreshold,
+			p.cfg.PhaseMachine.ContextBudgetTokens,
+			p.cfg.PhaseMachine.CompactionGatePhases,
+		)
+	}
+
 	projectBrief := brief.Load(p.cfg.ProjectBrief)
 	basePrompt := spec.BuildPrompt(p.spec, projectBrief)
 
@@ -152,10 +163,35 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 		default:
 		}
 
+		if p.shouldSkipDirtyBit(ph.ID, result.DirtyFiles, l2Cycles) {
+			result.PhasesSkipped = append(result.PhasesSkipped, ph.ID)
+			result.DirtyBitSkips = append(result.DirtyBitSkips, ph.ID)
+			p.emitDirtyBitSkipEvent(ph)
+			if p.manifest != nil {
+				p.manifest.RecordDirtyBitSkip(ph.ID)
+				p.saveManifest()
+			}
+			i++
+			continue
+		}
+
 		phasePromptBase := basePrompt
 		if p.resumeBriefing != "" && !resumeBriefingUsed {
 			phasePromptBase = basePrompt + "\n" + p.resumeBriefing + "\n"
 			resumeBriefingUsed = true
+		}
+
+		if p.compactionGate != nil && p.compactionGate.IsGatePhase(ph.ID) {
+			estimate := p.estimatePromptTokens(phasePromptBase, result.DirtyFiles)
+			if p.compactionGate.ShouldCompact(estimate) {
+				p.completedRecords = CompactRecords(p.completedRecords)
+				result.Compactions++
+				p.emitCompactionEvent(ph, estimate)
+				if p.manifest != nil {
+					p.manifest.RecordCompaction(ph.ID)
+					p.saveManifest()
+				}
+			}
 		}
 
 		phaseStart := time.Now()
@@ -991,4 +1027,52 @@ func countHeartbeats(output []string) int {
 		}
 	}
 	return count
+}
+
+func (p *Pipeline) estimatePromptTokens(basePrompt string, dirtyFiles map[int][]string) int {
+	tokens := EstimateTokens(basePrompt)
+	for _, r := range p.completedRecords {
+		tokens += EstimateTokens(buildRecordDetail(r))
+		for _, n := range r.Notes {
+			tokens += EstimateTokens(n)
+		}
+		for _, e := range r.Errors {
+			tokens += EstimateTokens(e)
+		}
+	}
+	for _, files := range dirtyFiles {
+		for _, f := range files {
+			tokens += EstimateTokens(f)
+		}
+	}
+	return tokens
+}
+
+func (p *Pipeline) emitDirtyBitSkipEvent(ph Phase) {
+	if p.emitter == nil {
+		return
+	}
+	_ = p.emitter.TaskEvent(
+		fmt.Sprintf("%s-phase-%d", p.specID, ph.ID),
+		"", "", "baton-pipeline", "phase_dirty_bit_skip",
+		map[string]interface{}{
+			"phase_id":   ph.ID,
+			"phase_name": ph.Name,
+			"reason":     "no upstream file changes",
+		})
+}
+
+func (p *Pipeline) emitCompactionEvent(ph Phase, tokensBefore int) {
+	if p.emitter == nil {
+		return
+	}
+	_ = p.emitter.TaskEvent(
+		fmt.Sprintf("%s-phase-%d", p.specID, ph.ID),
+		"", "", "baton-pipeline", "compaction_triggered",
+		map[string]interface{}{
+			"phase_id":        ph.ID,
+			"phase_name":      ph.Name,
+			"tokens_before":   tokensBefore,
+			"records_compacted": len(p.completedRecords),
+		})
 }

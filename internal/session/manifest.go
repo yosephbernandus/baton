@@ -43,10 +43,12 @@ type PhaseRecord struct {
 }
 
 type PipelineState struct {
-	CurrentPhase    int   `yaml:"current_phase"`
-	PhasesCompleted []int `yaml:"phases_completed"`
-	PhasesSkipped   []int `yaml:"phases_skipped"`
-	L2Cycles        int   `yaml:"l2_cycles"`
+	CurrentPhase      int   `yaml:"current_phase"`
+	PhasesCompleted   []int `yaml:"phases_completed"`
+	PhasesSkipped     []int `yaml:"phases_skipped"`
+	L2Cycles          int   `yaml:"l2_cycles"`
+	CompactedAtPhases []int `yaml:"compacted_at_phases,omitempty"`
+	DirtyBitSkips     []int `yaml:"dirty_bit_skips,omitempty"`
 }
 
 type BudgetState struct {
@@ -180,6 +182,14 @@ func (m *Manifest) AddPipelineFiles(files []string) {
 			seen[f] = true
 		}
 	}
+}
+
+func (m *Manifest) RecordCompaction(phaseID int) {
+	m.Pipeline.CompactedAtPhases = appendUnique(m.Pipeline.CompactedAtPhases, phaseID)
+}
+
+func (m *Manifest) RecordDirtyBitSkip(phaseID int) {
+	m.Pipeline.DirtyBitSkips = appendUnique(m.Pipeline.DirtyBitSkips, phaseID)
 }
 
 func appendUnique(slice []int, val int) []int {
