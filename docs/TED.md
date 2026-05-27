@@ -116,12 +116,15 @@ baton/
 |-- go.sum
 |
 |-- cmd/
-|   |-- run.go                  # baton run
+|   |-- run.go                  # baton run (+ gateway preflight)
+|   |-- pipeline.go             # baton pipeline run/status (+ gateway preflight)
 |   |-- status.go               # baton status
 |   |-- list.go                 # baton list
 |   |-- result.go               # baton result
 |   |-- monitor.go              # baton monitor
-|   +-- config.go               # baton config
+|   |-- config.go               # baton config
+|   |-- feedback.go             # baton feedback
+|   +-- anneal.go               # baton anneal
 |
 +-- internal/
     |-- config/config.go        # YAML config parsing, validation, precedence
@@ -131,6 +134,23 @@ baton/
     |-- lock/lock.go            # File lock registry, prefix locks, stale cleanup
     |-- brief/brief.go          # Project brief loader
     |-- events/events.go        # NDJSON emitter + tailer with fsnotify
+    |-- gateway/
+    |   |-- gateway.go          # Preflight orchestrator, Report, Finding types
+    |   +-- checks.go           # 5 pre-execution checks (runtime, budget, acceptance, locks, phases)
+    |-- phase/
+    |   |-- phase.go            # Phase definitions, complexity skip logic
+    |   |-- machine.go          # Pipeline execution, L1/L2/L3, compaction gates, dirty bit
+    |   |-- prompt.go           # Phase prompt builder with librarian scoring
+    |   |-- librarian.go        # 6-signal relevance scoring, 4-tier rendering, budgets
+    |   |-- compaction.go       # Smart + destructive compaction
+    |   |-- scratchpad.go       # Cross-retry memory
+    |   +-- loop_detect.go      # Jaccard similarity stuck detection
+    |-- role/                   # Five-role system, boundary verification
+    |-- skill/                  # Domain context routing
+    |-- session/                # Pipeline session manifest, auto-resume
+    |-- advisor/                # Escalation advisor (opt-in LLM consultation)
+    |-- feedback/               # Event log mining, pattern detection
+    |-- annealing/              # Self-annealing config patches
     +-- tui/
         |-- tui.go              # bubbletea model/update/view
         |-- taskview.go         # task table component
@@ -150,7 +170,11 @@ baton/
 |-- tasks/                      # task records (managed by baton)
 |   |-- task-001.yaml
 |   +-- task-002.yaml
-|-- results/                    # worker output captures
+|-- results/                    # worker output captures, cost tracking
+|-- sessions/                   # per-spec pipeline session manifests
+|-- skills/                     # domain context directories
+|-- feedback/                   # event log analysis output
+|-- annealing/                  # generated config patches
 |-- locks.yaml                  # file lock registry
 +-- events.ndjson               # append-only event log
 ```
@@ -173,6 +197,8 @@ type Config struct {
     Runtimes       map[string]RuntimeConfig    `yaml:"runtimes"`
     Defaults       DefaultsConfig              `yaml:"defaults"`
     Routing        RoutingConfig               `yaml:"routing"`
+    PhaseMachine   PhaseMachineConfig          `yaml:"phase_machine"`
+    Gateway        GatewayConfig               `yaml:"gateway"`
     ClarifyPatterns []string                   `yaml:"clarification_patterns"`
     ClarifyExit    int                         `yaml:"clarification_exit_code"`
     EventLog       string                      `yaml:"event_log"`
@@ -184,6 +210,33 @@ type Config struct {
     LogMaxSizeMB   int                         `yaml:"log_max_size_mb"`
     LogKeepCount   int                         `yaml:"log_keep_count"`
     DefaultTimeout string                      `yaml:"default_timeout"`
+}
+
+type PhaseMachineConfig struct {
+    Enabled                 bool           `yaml:"enabled"`
+    ComplexityDefault       string         `yaml:"complexity_default"`
+    MaxL1Retries            int            `yaml:"max_l1_retries"`
+    MaxL2Cycles             int            `yaml:"max_l2_cycles"`
+    MaxL3Cycles             int            `yaml:"max_l3_cycles"`
+    L3CooldownMs            int            `yaml:"l3_cooldown_ms"`
+    L3EscalationRuntime     string         `yaml:"l3_escalation_runtime"`
+    L3EscalationModel       string         `yaml:"l3_escalation_model"`
+    HeartbeatBudget         int            `yaml:"heartbeat_budget"`
+    BackoffBaseMs           int            `yaml:"backoff_base_ms"`
+    BackoffMaxMs            int            `yaml:"backoff_max_ms"`
+    BackoffJitter           bool           `yaml:"backoff_jitter"`
+    L2CooldownMs            int            `yaml:"l2_cooldown_ms"`
+    CompactionEnabled       bool           `yaml:"compaction_enabled"`
+    CompactionGateThreshold float64        `yaml:"compaction_gate_threshold"`
+    CompactionGatePhases    []int          `yaml:"compaction_gate_phases"`
+    ContextBudgetTokens     int            `yaml:"context_budget_tokens"`
+    DirtyBitSkipEnabled     bool           `yaml:"dirty_bit_skip_enabled"`
+    LibrarianEnabled        *bool          `yaml:"librarian_enabled"`
+    PhaseBudgets            map[string]int `yaml:"phase_budgets"`
+}
+
+type GatewayConfig struct {
+    Strict bool `yaml:"strict"`
 }
 
 type RuntimeConfig struct {
@@ -515,10 +568,72 @@ type PipelineResult struct {
 
 Key files:
 - `phase.go` — phase definitions, complexity skip logic, L2 constants
-- `machine.go` — pipeline execution, L1/L2 loops, advisor integration
-- `prompt.go` — phase-specific prompt builder (role + dirty files + scratchpad)
+- `machine.go` — pipeline execution, L1/L2/L3 loops, compaction gates, dirty bit tracking, advisor integration
+- `prompt.go` — phase-specific prompt builder (role + dirty files + scratchpad + librarian scoring)
 - `scratchpad.go` — per-task append-only notes for cross-retry memory
 - `loop_detect.go` — Jaccard similarity on output tails
+- `librarian.go` — relevance-scored context: 6-signal scoring, 4-tier rendering, per-group budgets
+- `compaction.go` — smart compaction (tier-aware) and destructive compaction (truncation)
+
+**Librarian types (relevance-scored context injection):**
+
+```go
+type PhaseGroup int // Planning, Implementation, Verification, Testing, Completion
+
+type ScoredRecord struct {
+    Record  session.PhaseRecord
+    Score   float64
+    PhaseID int
+}
+
+type RecordTier int // TierFull (≥0.7), TierSummary (0.4-0.7), TierMinimal (0.2-0.4), TierOmit (<0.2)
+
+type PhaseBudget struct {
+    Group      PhaseGroup
+    MaxTokens  int
+}
+
+func ScoreRecords(records []session.PhaseRecord, currentPhase Phase, l2Active bool) []ScoredRecord
+func AssignTiers(scored []ScoredRecord, budget int) []ScoredRecord
+func EstimateRecordTokens(rec session.PhaseRecord, tier RecordTier) int
+func ResolveBudget(ph Phase, configBudgets map[string]int) int
+```
+
+**Gateway types (pre-execution validation):**
+
+```go
+// internal/gateway/gateway.go
+type Severity int // SeverityWarn = 0, SeverityError = 1
+
+type Finding struct {
+    Check    string
+    Severity Severity
+    Message  string
+}
+
+type Input struct {
+    Config     *config.Config
+    Spec       *spec.Spec
+    Runtimes   []string
+    Complexity string
+    Mode       string // "run" or "pipeline"
+}
+
+type Report struct {
+    Findings []Finding
+}
+
+func (r *Report) HasErrors() bool
+func (r *Report) FormatStderr() string
+func Preflight(in Input) *Report
+
+// internal/gateway/checks.go
+func CheckRuntimeAvailable(cfg *config.Config, runtimeName string) []Finding
+func CheckPromptBudget(cfg *config.Config, s *spec.Spec) []Finding
+func CheckAcceptanceCommands(s *spec.Spec) []Finding
+func CheckLockConflicts(cfg *config.Config, s *spec.Spec) []Finding
+func CheckActivePhases(complexity string) []Finding
+```
 
 ### 3.9 Role Enforcer (`internal/role/`)
 

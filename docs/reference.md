@@ -416,7 +416,30 @@ phase_machine:
   complexity_default: MEDIUM    # TRIVIAL | SMALL | MEDIUM | LARGE
   max_l1_retries: 3             # retries per phase before failing
   max_l2_cycles: 3              # impl→verify loop cycles before failing
+  max_l3_cycles: 1              # orchestrator-level fresh approach cycles (0 or negative = disabled)
+  l3_cooldown_ms: 30000         # cooldown between L3 cycles
+  l3_escalation_runtime: ""     # optional: escalate to stronger runtime for L3
+  l3_escalation_model: ""       # optional: escalate to stronger model for L3
   heartbeat_budget: 50          # max heartbeats per phase (0 = unlimited)
+  backoff_base_ms: 1000         # L1 retry backoff base
+  backoff_max_ms: 30000         # L1 retry backoff cap
+  backoff_jitter: true          # add jitter to backoff
+  rate_limit_retries: 5         # retries on rate limit
+  rate_limit_base_wait_ms: 5000
+  rate_limit_max_wait_ms: 60000
+  l2_cooldown_ms: 5000          # cooldown between L2 cycles
+  compaction_enabled: true      # enable token-budget compaction gates
+  compaction_gate_threshold: 0.85  # trigger compaction at 85% of budget
+  compaction_gate_phases: [3, 8, 13]  # which phases check for compaction
+  context_budget_tokens: 180000    # total context window token budget
+  dirty_bit_skip_enabled: true  # skip verification re-run when no upstream changes
+  librarian_enabled: false      # enable relevance-scored context injection
+  phase_budgets:                # per-group token budgets (optional overrides)
+    planning: 5000
+    implementation: 20000
+    verification: 15000
+    testing: 18000
+    completion: 25000
 
 # Role-specific model routing (optional)
 # Different roles benefit from different models:
@@ -537,10 +560,14 @@ spec:
 3. **L1 retries**: Failed phase retries with scratchpad context (prevents repeating same mistakes)
 4. **Loop detection**: Jaccard similarity on output tails catches stuck workers early
 5. **L2 loops**: Failed verification → loops back to implementation (up to `max_l2_cycles`)
-6. **Dirty bit tracking**: Modified files injected into verification phase prompts
-7. **Smart resume**: Per-spec sessions at `.baton/sessions/`. Auto-detects interrupted pipelines and resumes from last completed phase with reasoning briefing (ADR-024)
-8. **Rate limit detection**: Configurable patterns per runtime. Rate-limited phases save state without burning retry budget
-9. **Escalation advisor** (opt-in): LLM consultation when all retries exhausted
+6. **L3 orchestrator retry**: When L2 cycles exhausted, restarts from brainstorming with fresh approach. Optional model escalation (e.g., Sonnet → Opus)
+7. **Dirty bit tracking**: Verification phases skip re-run when upstream implementation produced no file changes
+8. **Compaction gates**: Token budget-driven context pruning at configurable phase gates. Smart compaction (librarian) preserves high-relevance records
+9. **Smart librarian**: Relevance-scored context injection. Scores records by affinity, role, distance, file overlap, richness, and error boost. Assigns 4-tier rendering under per-phase-group token budgets
+10. **Gateway preflight**: Pre-execution validation catches runtime PATH issues, prompt budget overflows, missing acceptance commands, and lock conflicts before burning tokens
+11. **Smart resume**: Per-spec sessions at `.baton/sessions/`. Auto-detects interrupted pipelines and resumes from last completed phase with reasoning briefing (ADR-024)
+12. **Rate limit detection**: Configurable patterns per runtime. Rate-limited phases save state without burning retry budget
+13. **Escalation advisor** (opt-in): LLM consultation when all retries exhausted
 
 ### Domain Skills (Optional)
 
@@ -671,6 +698,24 @@ baton anneal history
 | `baton anneal generate` | Generate config patches |
 | `baton anneal list` | List pending patches |
 | `baton anneal history` | Full patch history |
+
+### Gateway (Pre-Execution Validation)
+
+The gateway runs preflight checks before pipeline or task execution. By default, findings are printed as warnings. Set `strict: true` to block execution on errors.
+
+```yaml
+gateway:
+  strict: false    # true = exit code 3 on preflight errors; false = warn only
+```
+
+**Checks performed:**
+| Check | What | Severity |
+|-------|------|----------|
+| `runtime_available` | Runtime binary exists in PATH | Error |
+| `prompt_budget` | Initial prompt fits within token budget | Warn/Error |
+| `acceptance_commands` | Acceptance check commands exist in PATH | Error |
+| `lock_conflict` | No advisory lock conflicts on `writes_to` paths | Error |
+| `active_phases` | Complexity produces >0 active phases (pipeline only) | Error |
 
 ## .gitignore
 

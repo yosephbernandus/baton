@@ -154,3 +154,35 @@ log_keep_count: 3
 
 # Default task timeout
 default_timeout: "10m"
+
+# 16-phase pipeline configuration
+phase_machine:
+  enabled: true
+  complexity_default: MEDIUM        # TRIVIAL | SMALL | MEDIUM | LARGE
+  max_l1_retries: 3                 # retries per phase
+  max_l2_cycles: 3                  # impl→verify loop cycles
+  max_l3_cycles: 1                  # orchestrator fresh-approach cycles (0 or negative = disabled)
+  l3_cooldown_ms: 30000
+  # l3_escalation_runtime: claude-code  # optional: stronger runtime for L3
+  # l3_escalation_model: opus           # optional: stronger model for L3
+  heartbeat_budget: 50
+  backoff_base_ms: 1000
+  backoff_max_ms: 30000
+  backoff_jitter: true
+  l2_cooldown_ms: 5000
+  compaction_enabled: true          # token-budget context pruning
+  compaction_gate_threshold: 0.85   # trigger at 85% of budget
+  compaction_gate_phases: [3, 8, 13]
+  context_budget_tokens: 180000
+  dirty_bit_skip_enabled: true      # skip verification when no upstream changes
+  librarian_enabled: false          # relevance-scored context injection
+  # phase_budgets:                  # per-group token overrides
+  #   planning: 5000
+  #   implementation: 20000
+  #   verification: 15000
+  #   testing: 18000
+  #   completion: 25000
+
+# Gateway pre-execution validation
+gateway:
+  strict: false   # true = block on preflight errors; false = warn only

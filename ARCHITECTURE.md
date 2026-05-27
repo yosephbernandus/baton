@@ -1513,6 +1513,76 @@ Advisor:           when everything exhausted → opt-in LLM consultation or cont
 
 **Loop detection:** After each retry, store last N output tails. If pairwise similarity exceeds threshold (default 0.9), declare the worker stuck and skip remaining retries.
 
+**L3 orchestrator retry:** When L1 and L2 are exhausted, L3 resets the pipeline back to implementation (phase 8) with a fresh-approach briefing. Optionally escalates to a stronger runtime/model. Controlled by `max_l3_cycles` (default 1, 0 disables) with cooldown between cycles. The briefing includes what failed, which approaches were tried, and remaining budget — giving the worker enough context to try a fundamentally different strategy without repeating the same mistakes.
+
+```
+L1 exhausted → L2 loop
+L2 exhausted → L3 fresh approach (optional model escalation)
+L3 exhausted → advisor consultation or hard fail
+```
+
+### Compaction Gates and Dirty Bit Tracking
+
+**Compaction gates** trigger at phase boundaries (configurable via `compaction_gate_phases`, default: 3, 8, 13) when accumulated context exceeds `compaction_gate_threshold` (default 85%) of `context_budget_tokens`. Two compaction strategies:
+
+- **Destructive compaction** (default): Truncates phase record notes to 200 chars, drops output tails. Simple and predictable.
+- **Smart compaction** (when librarian enabled): Uses relevance scoring to preserve high-value records and aggressively prune low-relevance ones. Preserves error context during L2 cycles.
+
+**Dirty bit tracking** lets verification phases skip re-verification when no upstream files changed. After implementation (phase 8) and testing (phases 13-14) complete, the pipeline records which files were modified. Subsequent verification phases check whether their input files are "dirty" — if no changes since last verification, the phase is skipped with a `skip_clean` status. Controlled by `dirty_bit_skip_enabled` (default true).
+
+```
+Phase 8 (impl) → writes main.go, handler.go → dirty = {8: [main.go, handler.go]}
+Phase 9 (design_verification) → checks dirty[8] → files changed → runs
+Phase 10 (domain_compliance) → checks dirty[8] → same files → runs
+Phase 13 (testing) → writes main_test.go → dirty = {13: [main_test.go]}
+Phase 14 (coverage) → checks dirty[13] → files changed → runs
+Phase 15 (test_quality) → checks dirty[13] → same files → runs
+   ↓ (if phase 8 re-runs in L2 loop)
+Phase 9 → checks dirty[8] → new files → runs again
+```
+
+### Smart Librarian (Relevance-Scored Context)
+
+When `librarian_enabled: true`, phase prompts use relevance scoring to prioritize which prior phase records get full context vs. minimal mentions. Six weighted signals:
+
+| Signal | Weight | What it measures |
+|--------|--------|-----------------|
+| Phase affinity | 0.40 | Static map of which phases inform which (e.g., architecture→implementation = 1.0) |
+| Role match | 0.15 | Same role as current phase |
+| Phase distance | 0.15 | Recency — closer phases score higher |
+| File overlap | 0.15 | Jaccard similarity of files_changed between phases |
+| Content richness | 0.05 | Whether notes exist and contain substance |
+| Error boost | 0.15 | Bonus for failed phases (especially during L2 retry) |
+
+Scores map to four rendering tiers:
+
+| Tier | Score range | What's included |
+|------|-------------|-----------------|
+| Full | ≥0.7 | Complete notes, files, status |
+| Summary | 0.4–0.7 | Notes truncated to 300 chars, files listed |
+| Minimal | 0.2–0.4 | Phase name + status only |
+| Omit | <0.2 | Excluded from prompt |
+
+Per-phase-group token budgets (planning/implementation/verification/testing/completion) cap total context injection. Configurable via `phase_budgets` in config.
+
+### Gateway Pattern (Pre-Execution Validation)
+
+Five deterministic checks run before any LLM tokens are spent:
+
+| Check | What | Severity |
+|-------|------|----------|
+| `runtime_available` | `exec.LookPath` on runtime command | Error |
+| `prompt_budget` | Estimate base prompt tokens vs budget | Warn/Error |
+| `acceptance_commands` | `exec.LookPath` on acceptance check binaries | Error |
+| `lock_conflict` | Read-only check on `writes_to` lock conflicts | Error |
+| `active_phases` | Verify complexity produces >0 active phases | Error |
+
+Two modes via `gateway.strict`:
+- `false` (default): Findings printed to stderr as warnings, execution continues
+- `true`: Any Error-severity finding → exit code 3, no tokens burned
+
+Gateway runs in both `baton run` and `baton pipeline run`. Lock check in gateway is read-only — `cmd/run.go` still does the actual `Acquire` for write locking.
+
 ### Skill Routing
 
 Domain-specific context injected into prompts from `.baton/skills/{domain}/`:
@@ -1558,14 +1628,20 @@ Detected patterns: runtime_domain_mismatch, retry_budget_insufficient, loop_mode
 ### Package Dependencies
 
 ```
-cmd/pipeline.go ─→ phase.NewPipeline() ─→ runner.Run() (per phase)
+cmd/pipeline.go ─→ gateway.Preflight() (pre-execution validation)
+                ─→ phase.NewPipeline() ─→ runner.Run() (per phase)
                                         ├→ role.VerifyBoundary() (post-hoc)
                                         ├→ role.AllowedTools() → runner.BuildToolRestrictionFlags()
                                         ├→ skill.NewRouter().LoadContext() (domain context)
                                         ├→ phase.NewScratchpad() (cross-retry memory)
                                         ├→ phase.NewLoopDetector() (stuck detection)
+                                        ├→ phase.ScoreRecords() + AssignTiers() (librarian)
+                                        ├→ phase.SmartCompact() (compaction gates)
                                         ├→ session.Manifest (crash recovery)
                                         └→ advisor.Consult() (escalation, opt-in)
+
+cmd/run.go      ─→ gateway.Preflight() (pre-execution validation)
+                ─→ runner.Run() (single task)
 
 cmd/feedback.go ─→ feedback.NewMiner().Analyze()
 cmd/anneal.go   ─→ annealing.New().GeneratePatches()
