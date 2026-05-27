@@ -38,8 +38,12 @@ func NewStatusCmd() *cobra.Command {
 				}
 			}
 
-			if n, _ := bsync.Reconcile(cfg.EventLog, store); n > 0 {
-				fmt.Fprintf(cmd.OutOrStderr(), "reconciled %d tasks from event log\n", n)
+			taskN, subdirN, _ := bsync.ReconcileAll(cfg.EventLog, store, cfg.TaskDir)
+			if taskN > 0 {
+				fmt.Fprintf(cmd.OutOrStderr(), "reconciled %d tasks from event log\n", taskN)
+			}
+			if subdirN > 0 {
+				fmt.Fprintf(cmd.OutOrStderr(), "reconciled %d stale pipeline manifests\n", subdirN)
 			}
 
 			tasks, err := store.List(filter)

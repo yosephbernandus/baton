@@ -2,12 +2,14 @@ package sync
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/yosephbernandus/baton/internal/task"
+	"gopkg.in/yaml.v3"
 )
 
 func TestReconcileUpdatesStaleTask(t *testing.T) {
@@ -82,6 +84,105 @@ func TestReconcileLastEventWins(t *testing.T) {
 	t1, _ := store.Get("t1")
 	if t1.Status != "completed" {
 		t.Errorf("t1: want completed (last event wins), got %q", t1.Status)
+	}
+}
+
+func TestReconcileSubdirsStaleManifest(t *testing.T) {
+	dir := t.TempDir()
+	taskDir := filepath.Join(dir, "tasks")
+	subdir := filepath.Join(taskDir, "test-task")
+	_ = os.MkdirAll(subdir, 0o755)
+
+	manifest := `session_id: test-task
+status: running
+worker_pid: 99999
+updated_at: 2026-01-01T00:00:00Z
+`
+	_ = os.WriteFile(filepath.Join(subdir, "manifest.yaml"), []byte(manifest), 0o644)
+
+	count, err := ReconcileSubdirs(taskDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("want 1 reconciled, got %d", count)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(subdir, "manifest.yaml"))
+	var m subdirManifest
+	_ = yaml.Unmarshal(data, &m)
+	if m.Status != "failed" {
+		t.Errorf("want failed, got %q", m.Status)
+	}
+}
+
+func TestReconcileSubdirsStaleWorkerState(t *testing.T) {
+	dir := t.TempDir()
+	taskDir := filepath.Join(dir, "tasks")
+	subdir := filepath.Join(taskDir, "test-task")
+	_ = os.MkdirAll(subdir, 0o755)
+
+	ws := `task_id: test-task
+state: started
+worker_pid: 99999
+`
+	_ = os.WriteFile(filepath.Join(subdir, "worker-state.yaml"), []byte(ws), 0o644)
+
+	count, err := ReconcileSubdirs(taskDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("want 1 reconciled, got %d", count)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(subdir, "worker-state.yaml"))
+	var state subdirWorkerState
+	_ = yaml.Unmarshal(data, &state)
+	if state.State != "failed" {
+		t.Errorf("want failed, got %q", state.State)
+	}
+}
+
+func TestReconcileSubdirsSkipsLivePID(t *testing.T) {
+	dir := t.TempDir()
+	taskDir := filepath.Join(dir, "tasks")
+	subdir := filepath.Join(taskDir, "live-task")
+	_ = os.MkdirAll(subdir, 0o755)
+
+	manifest := fmt.Sprintf(`session_id: live-task
+status: running
+worker_pid: %d
+`, os.Getpid())
+	_ = os.WriteFile(filepath.Join(subdir, "manifest.yaml"), []byte(manifest), 0o644)
+
+	count, err := ReconcileSubdirs(taskDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("want 0 reconciled (live PID), got %d", count)
+	}
+}
+
+func TestReconcileSubdirsSkipsCompletedManifest(t *testing.T) {
+	dir := t.TempDir()
+	taskDir := filepath.Join(dir, "tasks")
+	subdir := filepath.Join(taskDir, "done-task")
+	_ = os.MkdirAll(subdir, 0o755)
+
+	manifest := `session_id: done-task
+status: completed
+worker_pid: 99999
+`
+	_ = os.WriteFile(filepath.Join(subdir, "manifest.yaml"), []byte(manifest), 0o644)
+
+	count, err := ReconcileSubdirs(taskDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("want 0 reconciled (already completed), got %d", count)
 	}
 }
 
