@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yosephbernandus/baton/internal/config"
 	"github.com/yosephbernandus/baton/internal/runner"
@@ -995,5 +996,34 @@ func TestSkillContextEmptyWhenNoDomain(t *testing.T) {
 	}
 	if strings.Contains(mr.prompts[0], "DOMAIN CONTEXT") {
 		t.Error("should not inject domain context when no domain")
+	}
+}
+
+func TestBackoffDelay(t *testing.T) {
+	base := 100 * time.Millisecond
+	max := 800 * time.Millisecond
+
+	d1 := backoffDelay(1, base, max, false)
+	if d1 != 100*time.Millisecond {
+		t.Errorf("attempt 1: want 100ms, got %v", d1)
+	}
+	d2 := backoffDelay(2, base, max, false)
+	if d2 != 200*time.Millisecond {
+		t.Errorf("attempt 2: want 200ms, got %v", d2)
+	}
+	d3 := backoffDelay(3, base, max, false)
+	if d3 != 400*time.Millisecond {
+		t.Errorf("attempt 3: want 400ms, got %v", d3)
+	}
+	d5 := backoffDelay(5, base, max, false)
+	if d5 != 800*time.Millisecond {
+		t.Errorf("attempt 5: want 800ms (capped), got %v", d5)
+	}
+
+	for i := 0; i < 20; i++ {
+		d := backoffDelay(1, base, max, true)
+		if d < 100*time.Millisecond || d >= 200*time.Millisecond {
+			t.Errorf("attempt 1 jitter: want [100ms, 200ms), got %v", d)
+		}
 	}
 }

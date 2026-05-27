@@ -3,6 +3,8 @@ package phase
 import (
 	"context"
 	"fmt"
+	"math"
+	"math/rand"
 	"os"
 	"strings"
 	"time"
@@ -232,6 +234,14 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 					p.manifest.LoopBackTo(L2StartPhase)
 					p.saveManifest()
 				}
+				select {
+				case <-ctx.Done():
+					result.Status = "failed"
+					result.Duration = time.Since(start)
+					p.saveManifestStatus("failed")
+					return result, nil
+				case <-time.After(p.resolveL2Cooldown()):
+				}
 				i = implIdx
 				continue
 			}
@@ -278,6 +288,14 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 					p.manifest.RecordL2Cycle()
 					p.manifest.LoopBackTo(L2StartPhase)
 					p.saveManifest()
+				}
+				select {
+				case <-ctx.Done():
+					result.Status = "failed"
+					result.Duration = time.Since(start)
+					p.saveManifestStatus("failed")
+					return result, nil
+				case <-time.After(p.resolveL2Cooldown()):
 				}
 				i = implIdx
 				continue
@@ -339,6 +357,7 @@ func (p *Pipeline) executePhaseWithRetries(
 	taskID := fmt.Sprintf("%s-phase-%d", p.specID, ph.ID)
 	scratchpad := NewScratchpad(p.cfg.TaskDir, taskID)
 	loopDetector := p.newLoopDetector()
+	boBase, boMax, boJitter := p.resolveBackoff()
 
 	var toolRestrictionFlags []string
 	if rt, ok := p.cfg.Runtimes[runtimeName]; ok {
@@ -411,14 +430,40 @@ func (p *Pipeline) executePhaseWithRetries(
 					return outcomeStuck, lastFailReason
 				}
 			}
+			select {
+			case <-ctx.Done():
+				p.finalizePhaseTask(taskID, "failed")
+				return outcomeCancelled, "pipeline cancelled"
+			case <-time.After(backoffDelay(attempt, boBase, boMax, boJitter)):
+			}
 			continue
 		}
 
 		if runResult.Status == "rate_limited" {
-			result.AttemptsByPhase[ph.ID] = attempt
 			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_rate_limited")
-			p.finalizePhaseTask(taskID, "rate_limited")
-			return outcomeRateLimited, fmt.Sprintf("phase %d (%s): rate limited", ph.ID, ph.Name)
+			rlRetries, rlBase, rlMax := p.resolveRateLimitRetry()
+			rateLimitResolved := false
+			for rlAttempt := 1; rlAttempt <= rlRetries; rlAttempt++ {
+				wait := backoffDelay(rlAttempt, rlBase, rlMax, true)
+				select {
+				case <-ctx.Done():
+					p.finalizePhaseTask(taskID, "failed")
+					return outcomeCancelled, "pipeline cancelled"
+				case <-time.After(wait):
+				}
+				rlResult, rlErr := p.runner.Run(ctx, taskID, runtimeName, model, phasePrompt, p.spec, liveness, toolRestrictionFlags...)
+				if rlErr != nil || rlResult.Status == "rate_limited" {
+					continue
+				}
+				runResult = rlResult
+				rateLimitResolved = true
+				break
+			}
+			if !rateLimitResolved {
+				result.AttemptsByPhase[ph.ID] = attempt
+				p.finalizePhaseTask(taskID, "rate_limited")
+				return outcomeRateLimited, fmt.Sprintf("phase %d (%s): rate limited after %d retries", ph.ID, ph.Name, rlRetries)
+			}
 		}
 
 		// Heartbeat budget check
@@ -429,6 +474,12 @@ func (p *Pipeline) executePhaseWithRetries(
 				_ = scratchpad.AppendAttempt(attempt, []string{budgetMsg}, budgetMsg)
 				lastFailReason = fmt.Sprintf("phase %d (%s): %s", ph.ID, ph.Name, budgetMsg)
 				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_budget_exceeded")
+				select {
+				case <-ctx.Done():
+					p.finalizePhaseTask(taskID, "failed")
+					return outcomeCancelled, "pipeline cancelled"
+				case <-time.After(backoffDelay(attempt, boBase, boMax, boJitter)):
+				}
 				continue
 			}
 		}
@@ -446,6 +497,12 @@ func (p *Pipeline) executePhaseWithRetries(
 				_ = scratchpad.AppendAttempt(attempt, []string{violationMsg}, "role boundary violated")
 				lastFailReason = fmt.Sprintf("phase %d (%s): %s", ph.ID, ph.Name, violationMsg)
 				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_boundary_violation")
+				select {
+				case <-ctx.Done():
+					p.finalizePhaseTask(taskID, "failed")
+					return outcomeCancelled, "pipeline cancelled"
+				case <-time.After(backoffDelay(attempt, boBase, boMax, boJitter)):
+				}
 				continue
 			}
 			if len(runResult.FilesChanged) > 0 {
@@ -497,6 +554,12 @@ func (p *Pipeline) executePhaseWithRetries(
 					_ = scratchpad.AppendAttempt(attempt, []string{violationMsg}, "role boundary violated")
 					lastFailReason = fmt.Sprintf("phase %d (%s): %s", ph.ID, ph.Name, violationMsg)
 					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_boundary_violation")
+					select {
+					case <-ctx.Done():
+						p.finalizePhaseTask(taskID, "failed")
+						return outcomeCancelled, "pipeline cancelled"
+					case <-time.After(backoffDelay(attempt, boBase, boMax, boJitter)):
+					}
 					continue
 				}
 				if len(runResult.FilesChanged) > 0 {
@@ -746,6 +809,59 @@ func (p *Pipeline) resolveMaxL2Cycles() int {
 		return p.cfg.PhaseMachine.MaxL2Cycles
 	}
 	return 3
+}
+
+func backoffDelay(attempt int, base, max time.Duration, jitter bool) time.Duration {
+	exp := math.Pow(2, float64(attempt-1))
+	d := time.Duration(float64(base) * exp)
+	if d > max {
+		d = max
+	}
+	if jitter {
+		d += time.Duration(rand.Int63n(int64(base)))
+	}
+	return d
+}
+
+func (p *Pipeline) resolveBackoff() (base, max time.Duration, jitter bool) {
+	cfg := p.cfg.PhaseMachine
+	base = 1 * time.Second
+	max = 8 * time.Second
+	jitter = true
+	if cfg.BackoffBaseMs > 0 {
+		base = time.Duration(cfg.BackoffBaseMs) * time.Millisecond
+	}
+	if cfg.BackoffMaxMs > 0 {
+		max = time.Duration(cfg.BackoffMaxMs) * time.Millisecond
+	}
+	if cfg.BackoffBaseMs > 0 || cfg.BackoffMaxMs > 0 {
+		jitter = cfg.BackoffJitter
+	}
+	return
+}
+
+func (p *Pipeline) resolveRateLimitRetry() (retries int, base, max time.Duration) {
+	cfg := p.cfg.PhaseMachine
+	retries = 10
+	base = 30 * time.Second
+	max = 60 * time.Second
+	if cfg.RateLimitRetries > 0 {
+		retries = cfg.RateLimitRetries
+	}
+	if cfg.RateLimitBaseWaitMs > 0 {
+		base = time.Duration(cfg.RateLimitBaseWaitMs) * time.Millisecond
+	}
+	if cfg.RateLimitMaxWaitMs > 0 {
+		max = time.Duration(cfg.RateLimitMaxWaitMs) * time.Millisecond
+	}
+	return
+}
+
+func (p *Pipeline) resolveL2Cooldown() time.Duration {
+	if p.cfg.PhaseMachine.L2CooldownMs > 0 {
+		return time.Duration(p.cfg.PhaseMachine.L2CooldownMs) * time.Millisecond
+	}
+	return 5 * time.Second
 }
 
 func (p *Pipeline) resolveRoleRuntime(role string) (string, string) {

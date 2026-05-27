@@ -93,6 +93,13 @@ type PhaseMachineConfig struct {
 	LoopWindowSize       int     `yaml:"loop_window_size"`
 	LoopThreshold        float64 `yaml:"loop_similarity_threshold"`
 	LoopTailLines        int     `yaml:"loop_tail_lines"`
+	BackoffBaseMs        int     `yaml:"backoff_base_ms"`
+	BackoffMaxMs         int     `yaml:"backoff_max_ms"`
+	BackoffJitter        bool    `yaml:"backoff_jitter"`
+	RateLimitRetries     int     `yaml:"rate_limit_retries"`
+	RateLimitBaseWaitMs  int     `yaml:"rate_limit_base_wait_ms"`
+	RateLimitMaxWaitMs   int     `yaml:"rate_limit_max_wait_ms"`
+	L2CooldownMs         int     `yaml:"l2_cooldown_ms"`
 }
 
 type RoleModelConfig struct {
