@@ -44,6 +44,7 @@ func main() {
 		cmd.NewPlanCmd(),
 		cmd.NewKnowledgeCmd(),
 		cmd.NewGrepCmd(),
+		cmd.NewDispatchCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
