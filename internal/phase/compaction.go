@@ -55,6 +55,79 @@ func EstimateTokens(text string) int {
 	return int(float64(words) * 1.3)
 }
 
+func SmartCompact(
+	records []session.PhaseRecord,
+	currentPhase Phase,
+	dirtyFiles map[int][]string,
+	l2Active, l3Active bool,
+	configBudgets map[string]int,
+) []session.PhaseRecord {
+	scored := ScoreRecords(records, currentPhase, dirtyFiles, l2Active, l3Active)
+	budget := ResolveBudget(currentPhase.ID, configBudgets)
+	scored = AssignTiers(scored, budget)
+
+	compacted := make([]session.PhaseRecord, 0, len(records))
+	for _, sr := range scored {
+		r := sr.Record
+		switch sr.Tier {
+		case TierFull:
+			compacted = append(compacted, r)
+		case TierSummary:
+			compacted = append(compacted, session.PhaseRecord{
+				ID:           r.ID,
+				Name:         r.Name,
+				Status:       r.Status,
+				Notes:        truncateNotes(r.Notes, 1, 200),
+				Errors:       truncateNotes(r.Errors, 1, 150),
+				FilesChanged: r.FilesChanged,
+				Attempts:     r.Attempts,
+				CompletedAt:  r.CompletedAt,
+			})
+		case TierMinimal:
+			cr := session.PhaseRecord{
+				ID:           r.ID,
+				Name:         r.Name,
+				Status:       r.Status,
+				FilesChanged: r.FilesChanged,
+				Attempts:     r.Attempts,
+				CompletedAt:  r.CompletedAt,
+			}
+			if (l2Active || l3Active) && IsVerificationPhase(r.ID) && len(r.Errors) > 0 {
+				cr.Errors = truncateNotes(r.Errors, 1, 200)
+			}
+			compacted = append(compacted, cr)
+		case TierOmit:
+			cr := session.PhaseRecord{
+				ID:     r.ID,
+				Name:   r.Name,
+				Status: r.Status,
+			}
+			if (l2Active || l3Active) && IsVerificationPhase(r.ID) && len(r.Errors) > 0 {
+				cr.Errors = truncateNotes(r.Errors, 1, 200)
+			}
+			compacted = append(compacted, cr)
+		}
+	}
+	return compacted
+}
+
+func truncateNotes(notes []string, maxCount, maxLen int) []string {
+	if len(notes) == 0 {
+		return nil
+	}
+	result := make([]string, 0, maxCount)
+	for i, n := range notes {
+		if i >= maxCount {
+			break
+		}
+		if len(n) > maxLen {
+			n = n[:maxLen] + "..."
+		}
+		result = append(result, n)
+	}
+	return result
+}
+
 // CompactRecords strips verbose notes and errors from phase records,
 // keeping only essential state for prompt construction.
 func CompactRecords(records []session.PhaseRecord) []session.PhaseRecord {

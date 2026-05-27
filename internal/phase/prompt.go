@@ -35,7 +35,7 @@ var roleDescriptions = map[string]string{
 	RoleTester:    "You are the TESTER. You write and run tests. You MUST NOT modify production code, only test files.",
 }
 
-func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhases int, records []session.PhaseRecord, scratchpadContent string, dirtyFiles ...map[int][]string) string {
+func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhases int, records []session.PhaseRecord, scratchpadContent string, dirtyFiles map[int][]string, l2Active, l3Active, librarianEnabled bool, configBudgets map[string]int) string {
 	var b strings.Builder
 
 	b.WriteString(basePrompt)
@@ -59,24 +59,30 @@ func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhase
 	}
 
 	if len(records) > 0 {
-		b.WriteString("[PRIOR PHASE CONTEXT]\n")
-		for _, r := range records {
-			detail := buildRecordDetail(r)
-			fmt.Fprintf(&b, "- Phase %d (%s): %s\n", r.ID, r.Name, detail)
-			if len(r.Errors) > 0 {
-				for _, e := range r.Errors {
-					fmt.Fprintf(&b, "  error: %s\n", truncate(e, 200))
+		if librarianEnabled {
+			scored := ScoreRecords(records, ph, dirtyFiles, l2Active, l3Active)
+			budget := ResolveBudget(ph.ID, configBudgets)
+			scored = AssignTiers(scored, budget)
+			renderScoredRecords(&b, scored)
+		} else {
+			b.WriteString("[PRIOR PHASE CONTEXT]\n")
+			for _, r := range records {
+				detail := buildRecordDetail(r)
+				fmt.Fprintf(&b, "- Phase %d (%s): %s\n", r.ID, r.Name, detail)
+				if len(r.Errors) > 0 {
+					for _, e := range r.Errors {
+						fmt.Fprintf(&b, "  error: %s\n", truncate(e, 200))
+					}
 				}
 			}
+			b.WriteString("\n")
 		}
-		b.WriteString("\n")
 	}
 
-	if len(dirtyFiles) > 0 && dirtyFiles[0] != nil && IsVerificationPhase(ph.ID) {
-		df := dirtyFiles[0]
-		if len(df) > 0 {
+	if dirtyFiles != nil && IsVerificationPhase(ph.ID) {
+		if len(dirtyFiles) > 0 {
 			b.WriteString("[MODIFIED FILES — VERIFY THESE]\n")
-			for phaseID, files := range df {
+			for phaseID, files := range dirtyFiles {
 				if phaseID < ph.ID {
 					for _, f := range files {
 						fmt.Fprintf(&b, "- Phase %d: %s\n", phaseID, f)
@@ -206,4 +212,45 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+func renderScoredRecords(b *strings.Builder, scored []ScoredRecord) {
+	b.WriteString("[PRIOR PHASE CONTEXT]\n")
+	for _, sr := range scored {
+		r := sr.Record
+		switch sr.Tier {
+		case TierFull:
+			detail := buildRecordDetail(r)
+			fmt.Fprintf(b, "- Phase %d (%s): %s\n", r.ID, r.Name, detail)
+			if len(r.Errors) > 0 {
+				for _, e := range r.Errors {
+					fmt.Fprintf(b, "  error: %s\n", truncate(e, 300))
+				}
+			}
+			if r.FailReason != "" {
+				fmt.Fprintf(b, "  fail_reason: %s\n", truncate(r.FailReason, 200))
+			}
+		case TierSummary:
+			fmt.Fprintf(b, "- Phase %d (%s): %s", r.ID, r.Name, r.Status)
+			if len(r.Notes) > 0 {
+				fmt.Fprintf(b, " — %s", truncate(r.Notes[0], 200))
+			}
+			b.WriteString("\n")
+			if len(r.Errors) > 0 {
+				fmt.Fprintf(b, "  error: %s\n", truncate(r.Errors[0], 150))
+			}
+			if len(r.FilesChanged) > 0 {
+				fmt.Fprintf(b, "  files: %s\n", strings.Join(r.FilesChanged, ", "))
+			}
+		case TierMinimal:
+			fmt.Fprintf(b, "- Phase %d (%s): %s", r.ID, r.Name, r.Status)
+			if len(r.FilesChanged) > 0 {
+				fmt.Fprintf(b, " [%s]", strings.Join(r.FilesChanged, ", "))
+			}
+			b.WriteString("\n")
+		case TierOmit:
+			continue
+		}
+	}
+	b.WriteString("\n")
 }

@@ -193,9 +193,13 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 		}
 
 		if p.compactionGate != nil && p.compactionGate.IsGatePhase(ph.ID) {
-			estimate := p.estimatePromptTokens(phasePromptBase, result.DirtyFiles)
+			estimate := p.estimatePromptTokens(phasePromptBase, result.DirtyFiles, ph, l2Cycles > 0, l3Cycles > 0)
 			if p.compactionGate.ShouldCompact(estimate) {
-				p.completedRecords = CompactRecords(p.completedRecords)
+				if p.cfg.PhaseMachine.LibrarianEnabled != nil && *p.cfg.PhaseMachine.LibrarianEnabled {
+					p.completedRecords = SmartCompact(p.completedRecords, ph, result.DirtyFiles, l2Cycles > 0, l3Cycles > 0, p.cfg.PhaseMachine.PhaseBudgets)
+				} else {
+					p.completedRecords = CompactRecords(p.completedRecords)
+				}
 				result.Compactions++
 				p.emitCompactionEvent(ph, estimate)
 				if p.manifest != nil {
@@ -207,7 +211,7 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 
 		phaseStart := time.Now()
 		phaseOutcome, failReason := p.executePhaseWithRetries(
-			ctx, ph, phasePromptBase, totalPhases, maxRetries, result)
+			ctx, ph, phasePromptBase, totalPhases, maxRetries, result, l2Cycles > 0, l3Cycles > 0)
 
 		phaseDuration := time.Since(phaseStart)
 
@@ -505,6 +509,7 @@ func (p *Pipeline) executePhaseWithRetries(
 	totalPhases int,
 	maxRetries int,
 	result *PipelineResult,
+	l2Active, l3Active bool,
 ) (phaseOutcome, string) {
 
 	runtimeName, model := p.resolveRoleRuntime(ph.Role)
@@ -537,6 +542,8 @@ func (p *Pipeline) executePhaseWithRetries(
 		_ = p.store.Create(phaseTask)
 	}
 
+	libEnabled := p.cfg.PhaseMachine.LibrarianEnabled != nil && *p.cfg.PhaseMachine.LibrarianEnabled
+
 	for attempt := 1; attempt <= totalAttempts; attempt++ {
 		select {
 		case <-ctx.Done():
@@ -546,7 +553,7 @@ func (p *Pipeline) executePhaseWithRetries(
 		}
 
 		scratchpadContent := scratchpad.ForPrompt()
-		phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, p.completedRecords, scratchpadContent, result.DirtyFiles)
+		phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, p.completedRecords, scratchpadContent, result.DirtyFiles, l2Active, l3Active, libEnabled, p.cfg.PhaseMachine.PhaseBudgets)
 		phasePrompt = spec.BuildPromptWithProtocol(phasePrompt, taskID, p.cfg.TaskDir)
 
 		liveness := p.buildLiveness()
@@ -757,7 +764,7 @@ func (p *Pipeline) executePhaseWithRetries(
 			}, "advisor suggested retry with hint")
 
 			scratchpadContent := scratchpad.ForPrompt()
-			phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, p.completedRecords, scratchpadContent, result.DirtyFiles)
+			phasePrompt := BuildPhasePrompt(basePrompt, ph, p.config.Complexity, totalPhases, p.completedRecords, scratchpadContent, result.DirtyFiles, l2Active, l3Active, libEnabled, p.cfg.PhaseMachine.PhaseBudgets)
 			phasePrompt = spec.BuildPromptWithProtocol(phasePrompt, taskID, p.cfg.TaskDir)
 			liveness := p.buildLiveness()
 
@@ -1202,17 +1209,28 @@ func countHeartbeats(output []string) int {
 	return count
 }
 
-func (p *Pipeline) estimatePromptTokens(basePrompt string, dirtyFiles map[int][]string) int {
+func (p *Pipeline) estimatePromptTokens(basePrompt string, dirtyFiles map[int][]string, currentPhase Phase, l2Active, l3Active bool) int {
 	tokens := EstimateTokens(basePrompt)
-	for _, r := range p.completedRecords {
-		tokens += EstimateTokens(buildRecordDetail(r))
-		for _, n := range r.Notes {
-			tokens += EstimateTokens(n)
+
+	if p.cfg.PhaseMachine.LibrarianEnabled != nil && *p.cfg.PhaseMachine.LibrarianEnabled {
+		scored := ScoreRecords(p.completedRecords, currentPhase, dirtyFiles, l2Active, l3Active)
+		budget := ResolveBudget(currentPhase.ID, p.cfg.PhaseMachine.PhaseBudgets)
+		scored = AssignTiers(scored, budget)
+		for _, sr := range scored {
+			tokens += EstimateRecordTokens(sr.Record, sr.Tier)
 		}
-		for _, e := range r.Errors {
-			tokens += EstimateTokens(e)
+	} else {
+		for _, r := range p.completedRecords {
+			tokens += EstimateTokens(buildRecordDetail(r))
+			for _, n := range r.Notes {
+				tokens += EstimateTokens(n)
+			}
+			for _, e := range r.Errors {
+				tokens += EstimateTokens(e)
+			}
 		}
 	}
+
 	for _, files := range dirtyFiles {
 		for _, f := range files {
 			tokens += EstimateTokens(f)

@@ -1662,3 +1662,95 @@ func TestPipelineL3WithStuckLoop(t *testing.T) {
 		t.Errorf("L3Cycles=%d, want 1", result.L3Cycles)
 	}
 }
+
+func TestPipelineLibrarianEnabled(t *testing.T) {
+	activePhases := ActivePhases(DefaultPhases(), ComplexitySmall)
+	var results []*runner.Result
+	var errs []error
+	for _, ph := range activePhases {
+		r := &runner.Result{
+			Status: "completed",
+			Output: []string{
+				fmt.Sprintf("BATON:N:notes for %s", ph.Name),
+				fmt.Sprintf("BATON:C:%s:done", ph.CompletionSignal),
+			},
+		}
+		if ph.Role == RoleDeveloper {
+			r.FilesChanged = []string{"main.go"}
+		} else if ph.Role == RoleTester {
+			r.FilesChanged = []string{"main_test.go"}
+		}
+		results = append(results, r)
+		errs = append(errs, nil)
+	}
+
+	mr := &mockRunner{results: results, errors: errs}
+	cfg := testConfig(1)
+	cfg.PhaseMachine.BackoffBaseMs = 1
+	cfg.PhaseMachine.BackoffMaxMs = 1
+	libEnabled := true
+	cfg.PhaseMachine.LibrarianEnabled = &libEnabled
+	cfg.PhaseMachine.PhaseBudgets = map[string]int{"implementation": 30000}
+	cfg.TaskDir = t.TempDir()
+
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexitySmall})
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed. Reason: %s", result.Status, result.FailReason)
+	}
+
+	lastPrompt := mr.prompts[len(mr.prompts)-1]
+	if !strings.Contains(lastPrompt, "[PRIOR PHASE CONTEXT]") {
+		t.Error("librarian-enabled pipeline should include phase context in prompt")
+	}
+}
+
+func TestPipelineLibrarianCompaction(t *testing.T) {
+	var results []*runner.Result
+	var errs []error
+	phases := DefaultPhases()
+	for _, ph := range phases {
+		output := []string{
+			fmt.Sprintf("BATON:N:notes for %s", ph.Name),
+			fmt.Sprintf("BATON:C:%s:done", ph.CompletionSignal),
+		}
+		r := &runner.Result{
+			Status: "completed",
+			Output: output,
+		}
+		if ph.Role == RoleDeveloper {
+			r.FilesChanged = []string{"main.go"}
+		} else if ph.Role == RoleTester {
+			r.FilesChanged = []string{"main_test.go"}
+		}
+		results = append(results, r)
+		errs = append(errs, nil)
+	}
+
+	mr := &mockRunner{results: results, errors: errs}
+	cfg := testConfig(1)
+	cfg.PhaseMachine.BackoffBaseMs = 1
+	cfg.PhaseMachine.BackoffMaxMs = 1
+	libEnabled := true
+	compactionEnabled := true
+	cfg.PhaseMachine.LibrarianEnabled = &libEnabled
+	cfg.PhaseMachine.CompactionEnabled = &compactionEnabled
+	cfg.PhaseMachine.ContextBudgetTokens = 100
+	cfg.PhaseMachine.CompactionGateThreshold = 0.01
+	cfg.TaskDir = t.TempDir()
+
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexityLarge})
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed. Reason: %s", result.Status, result.FailReason)
+	}
+	if result.Compactions == 0 {
+		t.Error("expected compaction to fire with tiny budget and librarian enabled")
+	}
+}
