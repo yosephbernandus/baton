@@ -15,6 +15,7 @@ import (
 	"github.com/yosephbernandus/baton/internal/cost"
 	"github.com/yosephbernandus/baton/internal/decisions"
 	"github.com/yosephbernandus/baton/internal/events"
+	"github.com/yosephbernandus/baton/internal/gateway"
 	"github.com/yosephbernandus/baton/internal/lock"
 	"github.com/yosephbernandus/baton/internal/routing"
 	"github.com/yosephbernandus/baton/internal/runner"
@@ -102,6 +103,19 @@ func NewRunCmd() *cobra.Command {
 
 			if err := cfg.ValidateRuntime(runtimeName, model); err != nil {
 				return exitError(2, "%v", err)
+			}
+
+			report := gateway.Preflight(gateway.Input{
+				Config:   cfg,
+				Spec:     s,
+				Runtimes: []string{runtimeName},
+				Mode:     "run",
+			})
+			if msg := report.FormatStderr(); msg != "" {
+				fmt.Fprint(os.Stderr, msg)
+			}
+			if report.HasErrors() && cfg.Gateway.Strict {
+				return exitError(3, "gateway preflight failed")
 			}
 
 			taskID := taskIDFlag

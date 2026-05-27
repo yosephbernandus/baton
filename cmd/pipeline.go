@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/yosephbernandus/baton/internal/config"
 	"github.com/yosephbernandus/baton/internal/events"
+	"github.com/yosephbernandus/baton/internal/gateway"
 	gitpkg "github.com/yosephbernandus/baton/internal/git"
 	"github.com/yosephbernandus/baton/internal/phase"
 	"github.com/yosephbernandus/baton/internal/runner"
@@ -67,6 +68,28 @@ func newPipelineRunCmd() *cobra.Command {
 			complexity := resolveComplexity(complexityFlag, s.EstimatedComplexity, cfg.PhaseMachine.ComplexityDefault)
 			if !phase.ValidComplexity(complexity) {
 				return exitError(3, "invalid complexity %q, must be TRIVIAL|SMALL|MEDIUM|LARGE", complexity)
+			}
+
+			var runtimes []string
+			defaultRT, _ := cfg.ResolveRuntime("", "")
+			runtimes = append(runtimes, defaultRT)
+			for _, rm := range cfg.RoleModels {
+				if rm.Runtime != "" {
+					runtimes = append(runtimes, rm.Runtime)
+				}
+			}
+			report := gateway.Preflight(gateway.Input{
+				Config:     cfg,
+				Spec:       s,
+				Runtimes:   runtimes,
+				Complexity: complexity,
+				Mode:       "pipeline",
+			})
+			if msg := report.FormatStderr(); msg != "" {
+				fmt.Fprint(os.Stderr, msg)
+			}
+			if report.HasErrors() && cfg.Gateway.Strict {
+				return exitError(3, "gateway preflight failed")
 			}
 
 			store, err := task.NewStore(cfg.TaskDir)

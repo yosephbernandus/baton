@@ -37,6 +37,11 @@ type Config struct {
 	Annealing       AnnealingConfig            `yaml:"annealing"`
 	WorkerProtocol  WorkerProtocolConfig       `yaml:"worker_protocol"`
 	Dispatch        DispatchConfig             `yaml:"dispatch"`
+	Gateway         GatewayConfig              `yaml:"gateway"`
+}
+
+type GatewayConfig struct {
+	Strict bool `yaml:"strict"`
 }
 
 type DispatchConfig struct {
