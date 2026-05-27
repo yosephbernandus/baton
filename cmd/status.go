@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/yosephbernandus/baton/internal/config"
+	bsync "github.com/yosephbernandus/baton/internal/sync"
 	"github.com/yosephbernandus/baton/internal/task"
 )
 
@@ -35,6 +36,10 @@ func NewStatusCmd() *cobra.Command {
 				for _, id := range reaped {
 					fmt.Fprintf(cmd.OutOrStderr(), "reaped dead task: %s\n", id)
 				}
+			}
+
+			if n, _ := bsync.Reconcile(cfg.EventLog, store); n > 0 {
+				fmt.Fprintf(cmd.OutOrStderr(), "reconciled %d tasks from event log\n", n)
 			}
 
 			tasks, err := store.List(filter)
