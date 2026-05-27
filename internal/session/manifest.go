@@ -47,6 +47,7 @@ type PipelineState struct {
 	PhasesCompleted   []int `yaml:"phases_completed"`
 	PhasesSkipped     []int `yaml:"phases_skipped"`
 	L2Cycles          int   `yaml:"l2_cycles"`
+	L3Cycles          int   `yaml:"l3_cycles"`
 	CompactedAtPhases []int `yaml:"compacted_at_phases,omitempty"`
 	DirtyBitSkips     []int `yaml:"dirty_bit_skips,omitempty"`
 }
@@ -54,6 +55,7 @@ type PipelineState struct {
 type BudgetState struct {
 	L1RetriesTotal int `yaml:"l1_retries_total"`
 	L2CyclesTotal  int `yaml:"l2_cycles_total"`
+	L3CyclesTotal  int `yaml:"l3_cycles_total"`
 }
 
 func New(sessionID, specPath, complexity string) *Manifest {
@@ -183,6 +185,13 @@ func (m *Manifest) AddPipelineFiles(files []string) {
 		}
 	}
 }
+
+func (m *Manifest) RecordL3Cycle() {
+	m.Pipeline.L3Cycles++
+	m.Budget.L3CyclesTotal++
+}
+
+func (m *Manifest) RemainingL3Cycles(max int) int { return max - m.Budget.L3CyclesTotal }
 
 func (m *Manifest) RecordCompaction(phaseID int) {
 	m.Pipeline.CompactedAtPhases = appendUnique(m.Pipeline.CompactedAtPhases, phaseID)

@@ -114,6 +114,10 @@ func newPipelineRunCmd() *cobra.Command {
 					if maxL2 == 0 {
 						maxL2 = 3
 					}
+					maxL3 := cfg.PhaseMachine.MaxL3Cycles
+					if maxL3 == 0 {
+						maxL3 = 1
+					}
 
 					interruptedName := ""
 					interruptReason := "interrupted"
@@ -136,6 +140,7 @@ func newPipelineRunCmd() *cobra.Command {
 						manifest.PipelineFiles,
 						manifest.RemainingL1Retries(maxRetries+1),
 						manifest.RemainingL2Cycles(maxL2),
+						manifest.RemainingL3Cycles(maxL3),
 					)
 
 					p.SetResume(decision.StartPhase, briefing, manifest.PhaseRecords)

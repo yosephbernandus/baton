@@ -4,12 +4,12 @@ func isDirtyBitSkippable(phaseID int) bool {
 	return phaseID >= 9 && phaseID <= 15
 }
 
-func (p *Pipeline) shouldSkipDirtyBit(phaseID int, dirtyFiles map[int][]string, l2Cycles int) bool {
+func (p *Pipeline) shouldSkipDirtyBit(phaseID int, dirtyFiles map[int][]string, l2Cycles, l3Cycles int) bool {
 	if p.cfg.PhaseMachine.DirtyBitSkipEnabled != nil && !*p.cfg.PhaseMachine.DirtyBitSkipEnabled {
 		return false
 	}
-	// During L2, no changes means the fix didn't take — don't skip, let verification catch it
-	if l2Cycles > 0 {
+	// During L2/L3 retries, verification must run to detect if issue was resolved
+	if l2Cycles > 0 || l3Cycles > 0 {
 		return false
 	}
 	if !isDirtyBitSkippable(phaseID) {

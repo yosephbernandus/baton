@@ -56,7 +56,7 @@ func TestShouldSkipDirtyBitDisabled(t *testing.T) {
 	cfg.PhaseMachine.DirtyBitSkipEnabled = &disabled
 	p := NewPipeline(cfg, &mockRunner{}, nil, nil, testSpec(), "test", PipelineConfig{})
 
-	if p.shouldSkipDirtyBit(9, map[int][]string{}, 0) {
+	if p.shouldSkipDirtyBit(9, map[int][]string{}, 0, 0) {
 		t.Error("should not skip when disabled")
 	}
 }
@@ -65,8 +65,17 @@ func TestShouldSkipDirtyBitDuringL2(t *testing.T) {
 	cfg := testConfig(0)
 	p := NewPipeline(cfg, &mockRunner{}, nil, nil, testSpec(), "test", PipelineConfig{})
 
-	if p.shouldSkipDirtyBit(9, map[int][]string{}, 1) {
+	if p.shouldSkipDirtyBit(9, map[int][]string{}, 1, 0) {
 		t.Error("should not skip during L2 cycles")
+	}
+}
+
+func TestShouldSkipDirtyBitDuringL3(t *testing.T) {
+	cfg := testConfig(0)
+	p := NewPipeline(cfg, &mockRunner{}, nil, nil, testSpec(), "test", PipelineConfig{})
+
+	if p.shouldSkipDirtyBit(9, map[int][]string{}, 0, 1) {
+		t.Error("should not skip during L3 cycles")
 	}
 }
 
@@ -74,13 +83,13 @@ func TestShouldSkipDirtyBitNoChanges(t *testing.T) {
 	cfg := testConfig(0)
 	p := NewPipeline(cfg, &mockRunner{}, nil, nil, testSpec(), "test", PipelineConfig{})
 
-	if !p.shouldSkipDirtyBit(9, map[int][]string{}, 0) {
+	if !p.shouldSkipDirtyBit(9, map[int][]string{}, 0, 0) {
 		t.Error("should skip verification when no upstream changes")
 	}
-	if !p.shouldSkipDirtyBit(12, map[int][]string{}, 0) {
+	if !p.shouldSkipDirtyBit(12, map[int][]string{}, 0, 0) {
 		t.Error("should skip test_planning when no upstream changes")
 	}
-	if !p.shouldSkipDirtyBit(15, map[int][]string{}, 0) {
+	if !p.shouldSkipDirtyBit(15, map[int][]string{}, 0, 0) {
 		t.Error("should skip test_quality when no upstream changes")
 	}
 }
@@ -90,7 +99,7 @@ func TestShouldSkipDirtyBitWithChanges(t *testing.T) {
 	p := NewPipeline(cfg, &mockRunner{}, nil, nil, testSpec(), "test", PipelineConfig{})
 
 	dirty := map[int][]string{8: {"main.go"}}
-	if p.shouldSkipDirtyBit(9, dirty, 0) {
+	if p.shouldSkipDirtyBit(9, dirty, 0, 0) {
 		t.Error("should not skip when upstream has changes")
 	}
 }
@@ -99,10 +108,10 @@ func TestShouldSkipDirtyBitNonSkippablePhase(t *testing.T) {
 	cfg := testConfig(0)
 	p := NewPipeline(cfg, &mockRunner{}, nil, nil, testSpec(), "test", PipelineConfig{})
 
-	if p.shouldSkipDirtyBit(8, map[int][]string{}, 0) {
+	if p.shouldSkipDirtyBit(8, map[int][]string{}, 0, 0) {
 		t.Error("implementation phase should never be dirty-bit skipped")
 	}
-	if p.shouldSkipDirtyBit(16, map[int][]string{}, 0) {
+	if p.shouldSkipDirtyBit(16, map[int][]string{}, 0, 0) {
 		t.Error("completion phase should never be dirty-bit skipped")
 	}
 }

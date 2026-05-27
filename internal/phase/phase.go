@@ -77,6 +77,7 @@ func shouldSkip(p Phase, complexity string) bool {
 const (
 	L2StartPhase = 8  // implementation
 	L2EndPhase   = 15 // test_quality (inclusive)
+	L3StartPhase = 6  // brainstorming — rethink approach
 )
 
 func IsVerificationPhase(phaseID int) bool {

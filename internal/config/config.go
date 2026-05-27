@@ -115,6 +115,10 @@ type PhaseMachineConfig struct {
 	CompactionGatePhases    []int   `yaml:"compaction_gate_phases"`
 	ContextBudgetTokens     int     `yaml:"context_budget_tokens"`
 	DirtyBitSkipEnabled     *bool   `yaml:"dirty_bit_skip_enabled,omitempty"`
+	MaxL3Cycles             int     `yaml:"max_l3_cycles"`
+	L3CooldownMs            int     `yaml:"l3_cooldown_ms"`
+	L3EscalationRuntime     string  `yaml:"l3_escalation_runtime"`
+	L3EscalationModel       string  `yaml:"l3_escalation_model"`
 }
 
 type RoleModelConfig struct {

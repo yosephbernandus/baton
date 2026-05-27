@@ -104,7 +104,7 @@ func BuildPhasePrompt(basePrompt string, ph Phase, complexity string, totalPhase
 	return b.String()
 }
 
-func BuildResumeBriefing(records []session.PhaseRecord, interruptedPhase int, interruptedName string, interruptReason string, pipelineFiles []string, l1Remaining, l2Remaining int) string {
+func BuildResumeBriefing(records []session.PhaseRecord, interruptedPhase int, interruptedName string, interruptReason string, pipelineFiles []string, l1Remaining, l2Remaining, l3Remaining int) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "[PIPELINE RESUME — Continuing from Phase %d]\n\n", interruptedPhase)
@@ -144,8 +144,38 @@ func BuildResumeBriefing(records []session.PhaseRecord, interruptedPhase int, in
 	}
 
 	fmt.Fprintf(&b, "BUDGET:\n")
-	fmt.Fprintf(&b, "  L1 retries: %d available | L2 cycles: %d available\n\n", l1Remaining, l2Remaining)
+	fmt.Fprintf(&b, "  L1 retries: %d available | L2 cycles: %d available | L3 cycles: %d available\n\n", l1Remaining, l2Remaining, l3Remaining)
 	b.WriteString("Do not re-implement. Code is on disk. Read modified files and continue.\n")
+
+	return b.String()
+}
+
+func BuildL3Briefing(failedPhaseID int, failedPhaseName string, l3Cycle, l2CyclesUsed int, failReasons []string, escalatedModel string) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "[L3 FRESH APPROACH — Cycle %d]\n\n", l3Cycle)
+	b.WriteString("ALL previous approaches have failed after exhausting L1 retries and L2 implementation-verification loops.\n\n")
+
+	fmt.Fprintf(&b, "Failed at: Phase %d (%s)\n", failedPhaseID, failedPhaseName)
+	fmt.Fprintf(&b, "L2 cycles used: %d\n\n", l2CyclesUsed)
+
+	if len(failReasons) > 0 {
+		b.WriteString("PREVIOUS FAILURE REASONS:\n")
+		for i, reason := range failReasons {
+			fmt.Fprintf(&b, "  %d. %s\n", i+1, truncate(reason, 300))
+		}
+		b.WriteString("\n")
+	}
+
+	if escalatedModel != "" {
+		fmt.Fprintf(&b, "NOTE: Model escalated to %s for this attempt.\n\n", escalatedModel)
+	}
+
+	b.WriteString("REQUIREMENTS:\n")
+	b.WriteString("- You MUST choose a fundamentally different implementation approach\n")
+	b.WriteString("- Do NOT repeat any strategy that was tried before\n")
+	b.WriteString("- Consider alternative algorithms, data structures, or architectural patterns\n")
+	b.WriteString("- If previous approaches hit the same blocker, address that blocker explicitly\n")
 
 	return b.String()
 }

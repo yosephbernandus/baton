@@ -41,6 +41,7 @@ type PipelineResult struct {
 	Duration        time.Duration
 	AttemptsByPhase map[int]int
 	L2Cycles        int
+	L3Cycles        int
 	DirtyFiles      map[int][]string // phase ID → files changed
 	DirtyBitSkips   []int            // phase IDs skipped due to no upstream changes
 	Compactions     int              // number of compaction gate activations
@@ -59,6 +60,7 @@ type Pipeline struct {
 	manifestPath     string
 	advisor          *advisor.Advisor
 	compactionGate   *CompactionGate
+	l3ModelOverride  bool
 	resumeFromPhase  int
 	resumeBriefing   string
 	lastPhaseNotes   []string
@@ -139,6 +141,15 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 		l2Cycles = p.manifest.Budget.L2CyclesTotal
 	}
 
+	l3Cycles := 0
+	maxL3 := p.resolveMaxL3Cycles()
+	if p.manifest != nil {
+		l3Cycles = p.manifest.Pipeline.L3Cycles
+	}
+	if l3Cycles > 0 && p.cfg.PhaseMachine.L3EscalationRuntime != "" && p.cfg.PhaseMachine.L3EscalationModel != "" {
+		p.l3ModelOverride = true
+	}
+
 	startIdx := 0
 	if p.resumeFromPhase > 0 {
 		for j, ap := range active {
@@ -163,7 +174,7 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 		default:
 		}
 
-		if p.shouldSkipDirtyBit(ph.ID, result.DirtyFiles, l2Cycles) {
+		if p.shouldSkipDirtyBit(ph.ID, result.DirtyFiles, l2Cycles, l3Cycles) {
 			result.PhasesSkipped = append(result.PhasesSkipped, ph.ID)
 			result.DirtyBitSkips = append(result.DirtyBitSkips, ph.ID)
 			p.emitDirtyBitSkipEvent(ph)
@@ -282,9 +293,62 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 				continue
 			}
 
+			if IsVerificationPhase(ph.ID) && l3Cycles < maxL3 {
+				l3Cycles++
+				result.L3Cycles = l3Cycles
+				l2Cycles = 0
+
+				l3Target := p.resolveL3StartPhase(active)
+				targetTaskID := fmt.Sprintf("%s-phase-%d", p.specID, l3Target)
+				targetScratchpad := NewScratchpad(p.cfg.TaskDir, targetTaskID)
+				briefing := BuildL3Briefing(ph.ID, ph.Name, l3Cycles, maxL2, []string{failReason}, p.cfg.PhaseMachine.L3EscalationModel)
+				_ = targetScratchpad.AppendAttempt(0, []string{briefing},
+					fmt.Sprintf("L3 cycle %d: L2 exhausted, fresh approach required", l3Cycles))
+
+				p.emitL3Event(ph, l3Cycles, failReason)
+
+				if p.cfg.PhaseMachine.L3EscalationRuntime != "" && p.cfg.PhaseMachine.L3EscalationModel != "" {
+					p.l3ModelOverride = true
+				}
+
+				targetIdx := -1
+				for j, ap := range active {
+					if ap.ID == l3Target {
+						targetIdx = j
+						break
+					}
+				}
+				if targetIdx < 0 {
+					result.Status = "failed"
+					result.FailedPhase = intPtr(ph.ID)
+					result.FailReason = fmt.Sprintf("%s (L3: no target phase to loop back to)", failReason)
+					result.Duration = time.Since(start)
+					p.saveManifestStatus("failed")
+					return result, nil
+				}
+
+				if p.manifest != nil {
+					p.manifest.RecordL3Cycle()
+					p.manifest.LoopBackTo(l3Target)
+					p.saveManifest()
+				}
+				select {
+				case <-ctx.Done():
+					result.Status = "failed"
+					result.Duration = time.Since(start)
+					p.saveManifestStatus("failed")
+					return result, nil
+				case <-time.After(p.resolveL3Cooldown()):
+				}
+				i = targetIdx
+				continue
+			}
+
 			result.Status = "failed"
 			result.Duration = time.Since(start)
-			if l2Cycles >= maxL2 && IsVerificationPhase(ph.ID) {
+			if l3Cycles > 0 && l3Cycles >= maxL3 && IsVerificationPhase(ph.ID) {
+				result.FailReason = fmt.Sprintf("%s (L3 cycles exhausted: %d/%d, L2: %d/%d)", failReason, l3Cycles, maxL3, l2Cycles, maxL2)
+			} else if l2Cycles >= maxL2 && IsVerificationPhase(ph.ID) {
 				result.FailReason = fmt.Sprintf("%s (L2 cycles exhausted: %d/%d)", failReason, l2Cycles, maxL2)
 			}
 			p.saveManifestStatus("failed")
@@ -337,8 +401,62 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 				continue
 			}
 
+			if IsVerificationPhase(ph.ID) && l3Cycles < maxL3 {
+				l3Cycles++
+				result.L3Cycles = l3Cycles
+				l2Cycles = 0
+
+				l3Target := p.resolveL3StartPhase(active)
+				targetTaskID := fmt.Sprintf("%s-phase-%d", p.specID, l3Target)
+				targetScratchpad := NewScratchpad(p.cfg.TaskDir, targetTaskID)
+				briefing := BuildL3Briefing(ph.ID, ph.Name, l3Cycles, maxL2, []string{failReason}, p.cfg.PhaseMachine.L3EscalationModel)
+				_ = targetScratchpad.AppendAttempt(0, []string{briefing},
+					fmt.Sprintf("L3 cycle %d: L2 exhausted (stuck), fresh approach required", l3Cycles))
+
+				p.emitL3Event(ph, l3Cycles, "loop detected — worker stuck")
+
+				if p.cfg.PhaseMachine.L3EscalationRuntime != "" && p.cfg.PhaseMachine.L3EscalationModel != "" {
+					p.l3ModelOverride = true
+				}
+
+				targetIdx := -1
+				for j, ap := range active {
+					if ap.ID == l3Target {
+						targetIdx = j
+						break
+					}
+				}
+				if targetIdx < 0 {
+					result.Status = "failed"
+					result.FailedPhase = intPtr(ph.ID)
+					result.FailReason = fmt.Sprintf("%s (L3: no target phase to loop back to)", failReason)
+					result.Duration = time.Since(start)
+					p.saveManifestStatus("failed")
+					return result, nil
+				}
+
+				if p.manifest != nil {
+					p.manifest.RecordL3Cycle()
+					p.manifest.LoopBackTo(l3Target)
+					p.saveManifest()
+				}
+				select {
+				case <-ctx.Done():
+					result.Status = "failed"
+					result.Duration = time.Since(start)
+					p.saveManifestStatus("failed")
+					return result, nil
+				case <-time.After(p.resolveL3Cooldown()):
+				}
+				i = targetIdx
+				continue
+			}
+
 			result.Status = "failed"
 			result.Duration = time.Since(start)
+			if l3Cycles > 0 && l3Cycles >= maxL3 && IsVerificationPhase(ph.ID) {
+				result.FailReason = fmt.Sprintf("%s (L3 cycles exhausted: %d/%d)", failReason, l3Cycles, maxL3)
+			}
 			p.saveManifestStatus("failed")
 			return result, nil
 
@@ -847,6 +965,32 @@ func (p *Pipeline) resolveMaxL2Cycles() int {
 	return 3
 }
 
+func (p *Pipeline) resolveMaxL3Cycles() int {
+	if p.cfg.PhaseMachine.MaxL3Cycles < 0 {
+		return 0
+	}
+	if p.cfg.PhaseMachine.MaxL3Cycles > 0 {
+		return p.cfg.PhaseMachine.MaxL3Cycles
+	}
+	return 1
+}
+
+func (p *Pipeline) resolveL3Cooldown() time.Duration {
+	if p.cfg.PhaseMachine.L3CooldownMs > 0 {
+		return time.Duration(p.cfg.PhaseMachine.L3CooldownMs) * time.Millisecond
+	}
+	return 10 * time.Second
+}
+
+func (p *Pipeline) resolveL3StartPhase(active []Phase) int {
+	for _, ph := range active {
+		if ph.ID == L3StartPhase {
+			return L3StartPhase
+		}
+	}
+	return L2StartPhase
+}
+
 func backoffDelay(attempt int, base, max time.Duration, jitter bool) time.Duration {
 	exp := math.Pow(2, float64(attempt-1))
 	d := time.Duration(float64(base) * exp)
@@ -901,6 +1045,15 @@ func (p *Pipeline) resolveL2Cooldown() time.Duration {
 }
 
 func (p *Pipeline) resolveRoleRuntime(role string) (string, string) {
+	if p.l3ModelOverride {
+		if role == RoleDeveloper || role == RoleTester {
+			rt := p.cfg.PhaseMachine.L3EscalationRuntime
+			m := p.cfg.PhaseMachine.L3EscalationModel
+			if rt != "" && m != "" {
+				return rt, m
+			}
+		}
+	}
 	if p.cfg.RoleModels != nil {
 		if rm, ok := p.cfg.RoleModels[role]; ok {
 			rt := rm.Runtime
@@ -977,6 +1130,26 @@ func (p *Pipeline) emitL2Event(failedPhase Phase, cycle int, reason string) {
 			"reason":            reason,
 			"looping_back_to":   L2StartPhase,
 		})
+}
+
+func (p *Pipeline) emitL3Event(failedPhase Phase, cycle int, reason string) {
+	if p.emitter == nil {
+		return
+	}
+	data := map[string]interface{}{
+		"cycle":             cycle,
+		"failed_phase_id":   failedPhase.ID,
+		"failed_phase_name": failedPhase.Name,
+		"reason":            reason,
+		"looping_back_to":   p.resolveL3StartPhase(DefaultPhases()),
+	}
+	if p.cfg.PhaseMachine.L3EscalationModel != "" {
+		data["escalated_model"] = p.cfg.PhaseMachine.L3EscalationModel
+	}
+	_ = p.emitter.TaskEvent(
+		fmt.Sprintf("%s-l3-cycle-%d", p.specID, cycle),
+		"", "", "baton-pipeline", "l3_fresh_approach",
+		data)
 }
 
 func extractCompletion(output []string, expectedSignal string) proto.CompletionPromise {

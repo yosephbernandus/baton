@@ -20,14 +20,18 @@ type mockRunner struct {
 	calls     int
 	prompts   []string
 	extraArgs [][]string
+	runtimes  []string
+	models    []string
 }
 
-func (m *mockRunner) Run(_ context.Context, _, _, _, prompt string,
+func (m *mockRunner) Run(_ context.Context, _, runtimeName, model, prompt string,
 	_ *spec.Spec, _ runner.LivenessConfig, extraArgs ...string) (*runner.Result, error) {
 	i := m.calls
 	m.calls++
 	m.prompts = append(m.prompts, prompt)
 	m.extraArgs = append(m.extraArgs, extraArgs)
+	m.runtimes = append(m.runtimes, runtimeName)
+	m.models = append(m.models, model)
 	if i < len(m.results) {
 		return m.results[i], m.errors[i]
 	}
@@ -482,6 +486,10 @@ func TestPipelineL2Exhausted(t *testing.T) {
 
 	cfg := testConfig(2) // 3 L1 attempts
 	cfg.PhaseMachine.MaxL2Cycles = 3
+	cfg.PhaseMachine.MaxL3Cycles = -1 // disable L3
+	cfg.PhaseMachine.L2CooldownMs = 1
+	cfg.PhaseMachine.BackoffBaseMs = 1
+	cfg.PhaseMachine.BackoffMaxMs = 1
 	cfg.TaskDir = t.TempDir()
 	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexitySmall})
 
@@ -1264,5 +1272,393 @@ func TestBackoffDelay(t *testing.T) {
 		if d < 100*time.Millisecond || d >= 200*time.Millisecond {
 			t.Errorf("attempt 1 jitter: want [100ms, 200ms), got %v", d)
 		}
+	}
+}
+
+func TestPipelineL3Succeeds(t *testing.T) {
+	// SMALL active: 1,2,3,4,8,10,12,13,14,15,16
+	// domain_compliance(10) fails 2 L1 attempts → L2 loops to 8 →
+	//   fails 2 more → L2 exhausted → L3 loops to 8 → succeeds
+	var results []*runner.Result
+	var errs []error
+
+	add := func(name string, fail bool, files ...string) {
+		status := "done"
+		if fail {
+			status = "fail:bad"
+		}
+		r := &runner.Result{
+			Status:       "completed",
+			Output:       []string{fmt.Sprintf("BATON:C:%s:%s", name, status)},
+			FilesChanged: files,
+		}
+		results = append(results, r)
+		errs = append(errs, nil)
+	}
+
+	// Pre-impl: phases 1,2,3,4 pass
+	for _, name := range []string{"setup", "triage", "discovery", "skill_discovery"} {
+		add(name, false)
+	}
+
+	// First pass: impl OK, domain_compliance fails 2x (L1 retries)
+	add("implementation", false, "main.go")
+	add("domain_compliance", true)
+	add("domain_compliance", true)
+
+	// L2: impl OK, domain_compliance fails 2x again
+	add("implementation", false, "main.go")
+	add("domain_compliance", true)
+	add("domain_compliance", true)
+
+	// L3: impl OK, everything passes
+	add("implementation", false, "main.go")
+	for _, name := range []string{"domain_compliance", "test_planning", "testing", "coverage_verification", "test_quality", "completion"} {
+		add(name, false)
+	}
+
+	mr := &mockRunner{results: results, errors: errs}
+	cfg := testConfig(1) // 2 L1 attempts per phase
+	cfg.PhaseMachine.MaxL2Cycles = 1
+	cfg.PhaseMachine.MaxL3Cycles = 1
+	cfg.PhaseMachine.L3CooldownMs = 1
+	cfg.PhaseMachine.L2CooldownMs = 1
+	cfg.PhaseMachine.BackoffBaseMs = 1
+	cfg.PhaseMachine.BackoffMaxMs = 1
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexitySmall})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed. Reason: %s", result.Status, result.FailReason)
+	}
+	if result.L2Cycles != 1 {
+		t.Errorf("L2Cycles=%d, want 1", result.L2Cycles)
+	}
+	if result.L3Cycles != 1 {
+		t.Errorf("L3Cycles=%d, want 1", result.L3Cycles)
+	}
+}
+
+func TestPipelineL3Exhausted(t *testing.T) {
+	// domain_compliance fails every time, exhausting L2 and L3
+	var results []*runner.Result
+	var errs []error
+
+	add := func(name string, fail bool, files ...string) {
+		status := "done"
+		if fail {
+			status = "fail:bad"
+		}
+		results = append(results, &runner.Result{
+			Status:       "completed",
+			Output:       []string{fmt.Sprintf("BATON:C:%s:%s", name, status)},
+			FilesChanged: files,
+		})
+		errs = append(errs, nil)
+	}
+
+	for _, name := range []string{"setup", "triage", "discovery", "skill_discovery"} {
+		add(name, false)
+	}
+
+	// 4 rounds (initial, L2, L3, post-L3 L2): impl OK, domain_compliance fails 2x each
+	for round := 0; round < 4; round++ {
+		add("implementation", false, "main.go")
+		add("domain_compliance", true)
+		add("domain_compliance", true)
+	}
+
+	mr := &mockRunner{results: results, errors: errs}
+	cfg := testConfig(1) // 2 L1 attempts
+	cfg.PhaseMachine.MaxL2Cycles = 1
+	cfg.PhaseMachine.MaxL3Cycles = 1
+	cfg.PhaseMachine.L3CooldownMs = 1
+	cfg.PhaseMachine.L2CooldownMs = 1
+	cfg.PhaseMachine.BackoffBaseMs = 1
+	cfg.PhaseMachine.BackoffMaxMs = 1
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexitySmall})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "failed" {
+		t.Errorf("status=%s, want failed", result.Status)
+	}
+	if !strings.Contains(result.FailReason, "L3 cycles exhausted") {
+		t.Errorf("fail reason=%q, want 'L3 cycles exhausted'", result.FailReason)
+	}
+	if result.L3Cycles != 1 {
+		t.Errorf("L3Cycles=%d, want 1", result.L3Cycles)
+	}
+}
+
+func TestPipelineL3NoTriggerNonVerification(t *testing.T) {
+	// Implementation (phase 8) fails — not verification, no L2/L3
+	var results []*runner.Result
+	var errs []error
+
+	for _, name := range []string{"setup", "triage", "discovery", "skill_discovery"} {
+		results = append(results, &runner.Result{
+			Status: "completed",
+			Output: []string{fmt.Sprintf("BATON:C:%s:done", name)},
+		})
+		errs = append(errs, nil)
+	}
+
+	// impl fails 2x (L1 retries exhausted)
+	for i := 0; i < 2; i++ {
+		results = append(results, &runner.Result{
+			Status: "completed", Output: []string{"BATON:C:implementation:fail:cant compile"},
+		})
+		errs = append(errs, nil)
+	}
+
+	mr := &mockRunner{results: results, errors: errs}
+	cfg := testConfig(1) // 2 L1 attempts
+	cfg.PhaseMachine.MaxL2Cycles = 1
+	cfg.PhaseMachine.MaxL3Cycles = 1
+	cfg.PhaseMachine.BackoffBaseMs = 1
+	cfg.PhaseMachine.BackoffMaxMs = 1
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexitySmall})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "failed" {
+		t.Errorf("status=%s, want failed", result.Status)
+	}
+	if result.L3Cycles != 0 {
+		t.Errorf("L3Cycles=%d, want 0", result.L3Cycles)
+	}
+	if result.L2Cycles != 0 {
+		t.Errorf("L2Cycles=%d, want 0", result.L2Cycles)
+	}
+}
+
+func TestPipelineL3ModelEscalation(t *testing.T) {
+	// After L3, developer/tester phases use escalated runtime/model
+	var results []*runner.Result
+	var errs []error
+
+	add := func(name string, fail bool, files ...string) {
+		status := "done"
+		if fail {
+			status = "fail:bad"
+		}
+		results = append(results, &runner.Result{
+			Status:       "completed",
+			Output:       []string{fmt.Sprintf("BATON:C:%s:%s", name, status)},
+			FilesChanged: files,
+		})
+		errs = append(errs, nil)
+	}
+
+	for _, name := range []string{"setup", "triage", "discovery", "skill_discovery"} {
+		add(name, false)
+	}
+
+	// Initial + L2: impl OK, domain_compliance fails 2x each round
+	for i := 0; i < 2; i++ {
+		add("implementation", false, "main.go")
+		add("domain_compliance", true)
+		add("domain_compliance", true)
+	}
+
+	// L3: impl OK, everything passes
+	add("implementation", false, "main.go")
+	for _, name := range []string{"domain_compliance", "test_planning", "testing", "coverage_verification", "test_quality", "completion"} {
+		add(name, false)
+	}
+
+	mr := &mockRunner{results: results, errors: errs}
+	cfg := testConfig(1) // 2 L1 attempts
+	cfg.PhaseMachine.MaxL2Cycles = 1
+	cfg.PhaseMachine.MaxL3Cycles = 1
+	cfg.PhaseMachine.L3CooldownMs = 1
+	cfg.PhaseMachine.L2CooldownMs = 1
+	cfg.PhaseMachine.BackoffBaseMs = 1
+	cfg.PhaseMachine.BackoffMaxMs = 1
+	cfg.PhaseMachine.L3EscalationRuntime = "escalated"
+	cfg.PhaseMachine.L3EscalationModel = "big-model"
+	cfg.Runtimes["escalated"] = config.RuntimeConfig{Command: "echo"}
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexitySmall})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed. Reason: %s", result.Status, result.FailReason)
+	}
+
+	// Calls: 0-3 setup/triage/disc/skill, 4 impl, 5-6 domain_fail×2,
+	//   7 L2 impl, 8-9 domain_fail×2, 10 L3 impl, 11-16 rest
+	l3ImplIdx := 10
+	if l3ImplIdx >= len(mr.runtimes) {
+		t.Fatalf("expected at least %d calls, got %d", l3ImplIdx+1, len(mr.runtimes))
+	}
+	if mr.runtimes[l3ImplIdx] != "escalated" {
+		t.Errorf("L3 impl runtime=%q, want escalated", mr.runtimes[l3ImplIdx])
+	}
+	if mr.models[l3ImplIdx] != "big-model" {
+		t.Errorf("L3 impl model=%q, want big-model", mr.models[l3ImplIdx])
+	}
+
+	// testing (tester role) also escalated — index 13
+	l3TestIdx := 13
+	if l3TestIdx >= len(mr.runtimes) {
+		t.Fatalf("expected at least %d calls, got %d", l3TestIdx+1, len(mr.runtimes))
+	}
+	if mr.runtimes[l3TestIdx] != "escalated" {
+		t.Errorf("L3 testing runtime=%q, want escalated", mr.runtimes[l3TestIdx])
+	}
+
+	// Reviewer (domain_compliance, index 11) should NOT be escalated
+	l3ReviewIdx := 11
+	if mr.runtimes[l3ReviewIdx] == "escalated" {
+		t.Errorf("L3 reviewer should not be escalated, got runtime=%q", mr.runtimes[l3ReviewIdx])
+	}
+}
+
+func TestPipelineL3DirtyBitDisabled(t *testing.T) {
+	// During L3, verification phases run even when impl produces no file changes.
+	// Pre-L3: impl WITH files so domain_compliance runs (dirty bit won't skip).
+	// After L3: impl WITHOUT files — dirty bit would skip verification, but L3 disables it.
+	var results []*runner.Result
+	var errs []error
+
+	add := func(name string, fail bool, files ...string) {
+		status := "done"
+		if fail {
+			status = "fail:bad"
+		}
+		results = append(results, &runner.Result{
+			Status:       "completed",
+			Output:       []string{fmt.Sprintf("BATON:C:%s:%s", name, status)},
+			FilesChanged: files,
+		})
+		errs = append(errs, nil)
+	}
+
+	for _, name := range []string{"setup", "triage", "discovery", "skill_discovery"} {
+		add(name, false)
+	}
+
+	// Initial + L2: impl WITH files, domain_compliance fails 2x each
+	for i := 0; i < 2; i++ {
+		add("implementation", false, "main.go")
+		add("domain_compliance", true)
+		add("domain_compliance", true)
+	}
+
+	// L3: impl WITHOUT files — dirty bit would skip verification but L3 disables dirty bit
+	add("implementation", false) // no FilesChanged
+	for _, name := range []string{"domain_compliance", "test_planning", "testing", "coverage_verification", "test_quality", "completion"} {
+		add(name, false)
+	}
+
+	mr := &mockRunner{results: results, errors: errs}
+	cfg := testConfig(1) // 2 L1 attempts
+	cfg.PhaseMachine.MaxL2Cycles = 1
+	cfg.PhaseMachine.MaxL3Cycles = 1
+	cfg.PhaseMachine.L3CooldownMs = 1
+	cfg.PhaseMachine.L2CooldownMs = 1
+	cfg.PhaseMachine.BackoffBaseMs = 1
+	cfg.PhaseMachine.BackoffMaxMs = 1
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexitySmall})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed. Reason: %s", result.Status, result.FailReason)
+	}
+	if result.L3Cycles != 1 {
+		t.Errorf("L3Cycles=%d, want 1", result.L3Cycles)
+	}
+	// 4 + 2*(1+2) + 1 + 6 = 17
+	if mr.calls != 17 {
+		t.Errorf("calls=%d, want 17 (dirty bit disabled during L3, all verification ran)", mr.calls)
+	}
+}
+
+func TestPipelineL3WithStuckLoop(t *testing.T) {
+	// Loop detection triggers outcomeStuck on verification → L2 → stuck again → L3 → passes
+	var results []*runner.Result
+	var errs []error
+
+	add := func(name string, fail bool, files ...string) {
+		status := "done"
+		if fail {
+			status = "fail:bad"
+		}
+		results = append(results, &runner.Result{
+			Status:       "completed",
+			Output:       []string{fmt.Sprintf("BATON:C:%s:%s", name, status)},
+			FilesChanged: files,
+		})
+		errs = append(errs, nil)
+	}
+
+	for _, name := range []string{"setup", "triage", "discovery", "skill_discovery"} {
+		add(name, false)
+	}
+
+	add("implementation", false, "main.go")
+
+	// domain_compliance stuck: 3 identical fail outputs triggers loop detection (window=3)
+	stuckResult := &runner.Result{
+		Status: "completed",
+		Output: []string{"checking naming...", "BATON:C:domain_compliance:fail:naming issue"},
+	}
+	for i := 0; i < 3; i++ {
+		results = append(results, stuckResult)
+		errs = append(errs, nil)
+	}
+
+	// L2: impl OK, domain_compliance stuck again (3 identical)
+	add("implementation", false, "main.go")
+	for i := 0; i < 3; i++ {
+		results = append(results, stuckResult)
+		errs = append(errs, nil)
+	}
+
+	// L3: impl OK, everything passes
+	add("implementation", false, "main.go")
+	for _, name := range []string{"domain_compliance", "test_planning", "testing", "coverage_verification", "test_quality", "completion"} {
+		add(name, false)
+	}
+
+	mr := &mockRunner{results: results, errors: errs}
+	cfg := testConfig(5) // 6 L1 attempts — loop fires at 3 identical
+	cfg.PhaseMachine.MaxL2Cycles = 1
+	cfg.PhaseMachine.MaxL3Cycles = 1
+	cfg.PhaseMachine.L3CooldownMs = 1
+	cfg.PhaseMachine.L2CooldownMs = 1
+	cfg.PhaseMachine.BackoffBaseMs = 1
+	cfg.PhaseMachine.BackoffMaxMs = 1
+	cfg.TaskDir = t.TempDir()
+	p := NewPipeline(cfg, mr, nil, nil, testSpec(), "test", PipelineConfig{Complexity: ComplexitySmall})
+
+	result, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status=%s, want completed. Reason: %s", result.Status, result.FailReason)
+	}
+	if result.L3Cycles != 1 {
+		t.Errorf("L3Cycles=%d, want 1", result.L3Cycles)
 	}
 }
