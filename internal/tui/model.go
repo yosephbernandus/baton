@@ -87,6 +87,7 @@ type taskState struct {
 	Stuck        bool
 	PID          int
 	LastEventAt  time.Time
+	deadSince    time.Time
 	reconciled   bool
 	viewport     viewport.Model
 	vpReady      bool
@@ -816,21 +817,31 @@ func (m *Model) clearStale() {
 	m.onCursorChanged()
 }
 
+const reapGracePeriod = 5 * time.Second
+
 func (m *Model) checkDeadProcesses() {
 	for _, id := range m.taskOrder {
 		t := m.tasks[id]
 		if t.Status != "running" && t.Status != "pending" {
 			continue
 		}
-		if t.PID > 0 && !task.ProcessAlive(t.PID) {
-			t.Status = "failed"
-			if m.reapCh != nil {
-				select {
-				case m.reapCh <- id:
-				default:
+		if t.PID > 0 {
+			switch {
+			case task.ProcessAlive(t.PID):
+				t.deadSince = time.Time{}
+			case t.deadSince.IsZero():
+				t.deadSince = time.Now()
+			case time.Since(t.deadSince) >= reapGracePeriod:
+				t.Status = "failed"
+				t.deadSince = time.Time{}
+				if m.reapCh != nil {
+					select {
+					case m.reapCh <- id:
+					default:
+					}
 				}
+				continue
 			}
-			continue
 		}
 		// Catch zombie tasks: no events for 30min+ and either started 1hr+ ago
 		// or stuck pending 1hr+ (never started). Handles PID-recycled and no-PID cases.

@@ -184,6 +184,20 @@ func TestCheckDeadProcessesZombieDetection(t *testing.T) {
 		reapCh:    reapCh,
 	}
 
+	// First call: dead-pid enters grace period (deadSince set), not yet reaped.
+	// zombie-no-pid and stale-pending still reap immediately (no PID, time-based).
+	// zombie-recycled has alive PID (os.Getpid()), handled by time-based zombie check.
+	m.checkDeadProcesses()
+
+	if m.tasks["dead-pid"].Status != "running" {
+		t.Errorf("dead-pid: first check should NOT reap (grace period), got %q", m.tasks["dead-pid"].Status)
+	}
+	if m.tasks["dead-pid"].deadSince.IsZero() {
+		t.Error("dead-pid: deadSince should be set after first check")
+	}
+
+	// Simulate grace period elapsed by backdating deadSince
+	m.tasks["dead-pid"].deadSince = time.Now().Add(-reapGracePeriod - time.Second)
 	m.checkDeadProcesses()
 
 	expects := map[string]string{
@@ -209,6 +223,34 @@ func TestCheckDeadProcessesZombieDetection(t *testing.T) {
 	}
 	if len(reaped) != 4 {
 		t.Errorf("expected 4 reaped, got %d: %v", len(reaped), reaped)
+	}
+}
+
+func TestCheckDeadProcessesGracePeriodReset(t *testing.T) {
+	reapCh := make(chan string, 10)
+
+	m := &Model{
+		tasks: map[string]*taskState{
+			"t1": {ID: "t1", Status: "running", PID: 99999, StartedAt: time.Now(), LastEventAt: time.Now()},
+		},
+		taskOrder: []string{"t1"},
+		reapCh:    reapCh,
+	}
+
+	// First check: grace period starts
+	m.checkDeadProcesses()
+	if m.tasks["t1"].deadSince.IsZero() {
+		t.Fatal("deadSince should be set")
+	}
+	if m.tasks["t1"].Status != "running" {
+		t.Fatalf("should still be running, got %q", m.tasks["t1"].Status)
+	}
+
+	// Simulate process coming back alive (PID recycled to a real process)
+	m.tasks["t1"].PID = os.Getpid()
+	m.checkDeadProcesses()
+	if !m.tasks["t1"].deadSince.IsZero() {
+		t.Error("deadSince should be reset when process is alive again")
 	}
 }
 
