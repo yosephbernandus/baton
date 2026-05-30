@@ -563,6 +563,13 @@ func (m *Model) processEvent(ev events.Event) {
 		}
 	case "phase_failed":
 		t.Status = "failed"
+	case "phase_dirty_bit_skip":
+		t.Status = "completed"
+		if ev.Data != nil {
+			if name, ok := ev.Data["phase_name"].(string); ok {
+				t.Progress = name + " (skipped)"
+			}
+		}
 	case "phase_retry":
 		t.Status = "running"
 		t.reconciled = false
@@ -600,11 +607,8 @@ func (m *Model) processEvent(ev events.Event) {
 		}
 		t.Progress = "consulting advisor"
 	case "l2_loop_back":
-		if t.Status == "" {
-			t.Status = "running"
-		}
+		t.Status = "completed"
 		t.Progress = "L2 loop back"
-		t.reconciled = false
 	case "phase_advanced":
 		if name, ok := ev.Data["phase_name"].(string); ok {
 			t.Progress = name
@@ -616,6 +620,10 @@ func (m *Model) processEvent(ev events.Event) {
 		// Worker completed current phase — still running overall
 	case "worker_completed":
 		t.Status = "completed"
+	case "worker_timeout":
+		t.Status = "timeout"
+	case "session_timeout":
+		t.Status = "timeout"
 	case "worker_heartbeat", "worker_progress", "worker_milestone":
 		if msg, ok := ev.Data["msg"].(string); ok {
 			t.Progress = msg
