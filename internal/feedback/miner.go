@@ -29,11 +29,19 @@ func NewMiner(eventLogPath string, window time.Duration, minOccurrences int) *Mi
 }
 
 type Analysis struct {
-	GeneratedAt        time.Time                  `yaml:"generated_at" json:"generated_at"`
-	EventWindow        EventWindow                `yaml:"event_window" json:"event_window"`
-	RuntimePerformance map[string]*RuntimeMetrics `yaml:"runtime_performance" json:"runtime_performance"`
-	PhaseMetrics       map[string]*PhaseMetric    `yaml:"phase_metrics" json:"phase_metrics"`
-	Patterns           []Pattern                  `yaml:"patterns" json:"patterns"`
+	GeneratedAt        time.Time                         `yaml:"generated_at" json:"generated_at"`
+	EventWindow        EventWindow                       `yaml:"event_window" json:"event_window"`
+	RuntimePerformance map[string]*RuntimeMetrics        `yaml:"runtime_performance" json:"runtime_performance"`
+	PhaseMetrics       map[string]*PhaseMetric           `yaml:"phase_metrics" json:"phase_metrics"`
+	ComplexityOutcomes map[string]*ComplexityOutcome      `yaml:"complexity_outcomes,omitempty" json:"complexity_outcomes,omitempty"`
+	Patterns           []Pattern                         `yaml:"patterns" json:"patterns"`
+}
+
+type ComplexityOutcome struct {
+	Tasks    int     `yaml:"tasks" json:"tasks"`
+	L2Cycles int     `yaml:"l2_cycles" json:"l2_cycles"`
+	L3Cycles int     `yaml:"l3_cycles" json:"l3_cycles"`
+	L2Rate   float64 `yaml:"l2_rate" json:"l2_rate"`
 }
 
 type EventWindow struct {
@@ -105,6 +113,7 @@ func (m *Miner) Analyze() (*Analysis, error) {
 			GeneratedAt:        time.Now().UTC(),
 			RuntimePerformance: make(map[string]*RuntimeMetrics),
 			PhaseMetrics:       make(map[string]*PhaseMetric),
+			ComplexityOutcomes: make(map[string]*ComplexityOutcome),
 		}, nil
 	}
 
@@ -112,6 +121,7 @@ func (m *Miner) Analyze() (*Analysis, error) {
 		GeneratedAt:        time.Now().UTC(),
 		RuntimePerformance: make(map[string]*RuntimeMetrics),
 		PhaseMetrics:       make(map[string]*PhaseMetric),
+		ComplexityOutcomes: make(map[string]*ComplexityOutcome),
 	}
 
 	taskSet := make(map[string]bool)
@@ -162,6 +172,10 @@ func (m *Miner) Analyze() (*Analysis, error) {
 			if complexity != "" {
 				cpm := m.ensureComplexityPhase(pm, complexity)
 				cpm.Runs++
+				if phaseName == "setup" {
+					co := m.ensureComplexityOutcome(analysis, complexity)
+					co.Tasks++
+				}
 			}
 
 		case "phase_retry":
@@ -203,6 +217,20 @@ func (m *Miner) Analyze() (*Analysis, error) {
 			if phaseName != "" {
 				pm := m.ensurePhase(analysis, phaseName)
 				pm.Timeouts++
+			}
+
+		case "l2_loop_back":
+			complexity := m.extractString(ev, "complexity")
+			if complexity != "" {
+				co := m.ensureComplexityOutcome(analysis, complexity)
+				co.L2Cycles++
+			}
+
+		case "l3_fresh_approach":
+			complexity := m.extractString(ev, "complexity")
+			if complexity != "" {
+				co := m.ensureComplexityOutcome(analysis, complexity)
+				co.L3Cycles++
 			}
 		}
 	}
@@ -329,6 +357,26 @@ func (m *Miner) detectPatterns(a *Analysis) []Pattern {
 		}
 	}
 
+	for complexity, co := range a.ComplexityOutcomes {
+		if co.Tasks < m.MinOccurrences {
+			continue
+		}
+		co.L2Rate = float64(co.L2Cycles) / float64(co.Tasks)
+		if co.L2Rate > 0.4 {
+			conf := "medium"
+			if co.L3Cycles > 0 {
+				conf = "high"
+			}
+			patterns = append(patterns, Pattern{
+				Type:        "complexity_mismatch",
+				Description: fmt.Sprintf("%s tasks trigger L2 cycles %.0f%% of the time", complexity, co.L2Rate*100),
+				Confidence:  conf,
+				Occurrences: co.L2Cycles,
+				Suggestion:  fmt.Sprintf("Bump default complexity above %s or review task specs", complexity),
+			})
+		}
+	}
+
 	return patterns
 }
 
@@ -414,6 +462,15 @@ func (m *Miner) ensureComplexityPhase(pm *PhaseMetric, complexity string) *Compl
 	cpm := &ComplexityPhaseMetric{}
 	pm.ByComplexity[complexity] = cpm
 	return cpm
+}
+
+func (m *Miner) ensureComplexityOutcome(a *Analysis, complexity string) *ComplexityOutcome {
+	if co, ok := a.ComplexityOutcomes[complexity]; ok {
+		return co
+	}
+	co := &ComplexityOutcome{}
+	a.ComplexityOutcomes[complexity] = co
+	return co
 }
 
 func (m *Miner) extractDomain(ev rawEvent) string {

@@ -3,6 +3,7 @@ package spec
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -206,6 +207,71 @@ func BuildPromptWithProtocol(basePrompt, taskID, taskDir string) string {
 	b.WriteString("Print BATON:S, wait for guidance, then proceed.\n")
 
 	return b.String()
+}
+
+var highComplexityDomains = map[string]bool{
+	"architecture": true, "security": true, "auth": true, "infrastructure": true,
+}
+
+func InferComplexity(s *Spec) string {
+	if s == nil {
+		return ""
+	}
+
+	score := 0
+
+	switch n := len(s.WritesTo); {
+	case n >= 7:
+		score += 3
+	case n >= 4:
+		score += 2
+	case n >= 2:
+		score += 1
+	}
+
+	dirs := make(map[string]bool)
+	for _, f := range s.ContextFiles {
+		dirs[filepath.Dir(f)] = true
+	}
+	switch {
+	case len(dirs) >= 4:
+		score += 2
+	case len(dirs) >= 2:
+		score += 1
+	}
+
+	switch n := len(s.AcceptanceChecks); {
+	case n >= 3:
+		score += 2
+	case n >= 1:
+		score += 1
+	}
+
+	switch n := len(s.AcceptanceCriteria); {
+	case n >= 6:
+		score += 2
+	case n >= 3:
+		score += 1
+	}
+
+	if highComplexityDomains[strings.ToLower(s.Domain)] {
+		score++
+	}
+
+	if len(s.Constraints) >= 5 {
+		score++
+	}
+
+	switch {
+	case score >= 7:
+		return "LARGE"
+	case score >= 4:
+		return "MEDIUM"
+	case score >= 2:
+		return "SMALL"
+	default:
+		return "TRIVIAL"
+	}
 }
 
 func BuildPromptWithResponse(s *Spec, projectBrief, clarification, answer, reason string) string {

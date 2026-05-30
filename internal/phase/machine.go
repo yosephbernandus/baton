@@ -1151,6 +1151,7 @@ func (p *Pipeline) emitL2Event(failedPhase Phase, cycle int, reason string) {
 			"failed_phase_name": failedPhase.Name,
 			"reason":            reason,
 			"looping_back_to":   L2StartPhase,
+			"complexity":        p.config.Complexity,
 		})
 }
 
@@ -1164,6 +1165,7 @@ func (p *Pipeline) emitL3Event(failedPhase Phase, cycle int, reason string) {
 		"failed_phase_name": failedPhase.Name,
 		"reason":            reason,
 		"looping_back_to":   p.resolveL3StartPhase(DefaultPhases()),
+		"complexity":        p.config.Complexity,
 	}
 	if p.cfg.PhaseMachine.L3EscalationModel != "" {
 		data["escalated_model"] = p.cfg.PhaseMachine.L3EscalationModel

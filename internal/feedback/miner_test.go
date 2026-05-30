@@ -255,6 +255,100 @@ func TestWindowFiltering(t *testing.T) {
 	}
 }
 
+func TestDetectComplexityMismatch(t *testing.T) {
+	dir := t.TempDir()
+	ts := now()
+	var events []rawEvent
+
+	// 4 SMALL tasks with setup phases (to count tasks)
+	for i := 0; i < 4; i++ {
+		events = append(events, rawEvent{
+			Timestamp: ts, TaskID: "t" + string(rune('a'+i)),
+			EventType: "phase_started", Data: map[string]interface{}{"phase_name": "setup", "complexity": "SMALL"},
+		})
+	}
+	// 3 of them trigger L2 loop backs (75% > 40% threshold)
+	for i := 0; i < 3; i++ {
+		events = append(events, rawEvent{
+			Timestamp: ts, TaskID: "t" + string(rune('a'+i)),
+			EventType: "l2_loop_back", Data: map[string]interface{}{"complexity": "SMALL"},
+		})
+	}
+	// 1 also triggers L3 (should boost confidence to high)
+	events = append(events, rawEvent{
+		Timestamp: ts, TaskID: "ta",
+		EventType: "l3_fresh_approach", Data: map[string]interface{}{"complexity": "SMALL"},
+	})
+
+	path := writeEvents(t, dir, events)
+	m := NewMiner(path, 24*time.Hour, 3)
+	a, err := m.Analyze()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, p := range a.Patterns {
+		if p.Type == "complexity_mismatch" {
+			found = true
+			if p.Confidence != "high" {
+				t.Errorf("confidence=%q, want high (L3 present)", p.Confidence)
+			}
+			if p.Occurrences != 3 {
+				t.Errorf("occurrences=%d, want 3", p.Occurrences)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected complexity_mismatch pattern")
+	}
+
+	co, ok := a.ComplexityOutcomes["SMALL"]
+	if !ok || co == nil {
+		t.Fatal("missing SMALL outcome")
+	}
+	if co.Tasks != 4 {
+		t.Errorf("tasks=%d, want 4", co.Tasks)
+	}
+	if co.L2Cycles != 3 {
+		t.Errorf("l2_cycles=%d, want 3", co.L2Cycles)
+	}
+	if co.L3Cycles != 1 {
+		t.Errorf("l3_cycles=%d, want 1", co.L3Cycles)
+	}
+}
+
+func TestComplexityMismatchBelowThreshold(t *testing.T) {
+	dir := t.TempDir()
+	ts := now()
+	var events []rawEvent
+
+	// 4 tasks, only 1 L2 cycle (25% < 40%)
+	for i := 0; i < 4; i++ {
+		events = append(events, rawEvent{
+			Timestamp: ts, TaskID: "t" + string(rune('a'+i)),
+			EventType: "phase_started", Data: map[string]interface{}{"phase_name": "setup", "complexity": "MEDIUM"},
+		})
+	}
+	events = append(events, rawEvent{
+		Timestamp: ts, TaskID: "ta",
+		EventType: "l2_loop_back", Data: map[string]interface{}{"complexity": "MEDIUM"},
+	})
+
+	path := writeEvents(t, dir, events)
+	m := NewMiner(path, 24*time.Hour, 3)
+	a, err := m.Analyze()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, p := range a.Patterns {
+		if p.Type == "complexity_mismatch" {
+			t.Error("should not detect mismatch below 40% threshold")
+		}
+	}
+}
+
 func TestDefaultMinerValues(t *testing.T) {
 	m := NewMiner("test", 0, 0)
 	if m.Window != 7*24*time.Hour {

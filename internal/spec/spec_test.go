@@ -180,3 +180,54 @@ func TestBuildPrompt_NoBrief(t *testing.T) {
 		t.Error("should not include PROJECT CONTEXT when brief is empty")
 	}
 }
+
+func TestInferComplexity(t *testing.T) {
+	tests := []struct {
+		name string
+		spec *Spec
+		want string
+	}{
+		{"nil spec", nil, ""},
+		{"empty spec", &Spec{}, "TRIVIAL"},
+		{"single file", &Spec{
+			WritesTo:     []string{"main.go"},
+			ContextFiles: []string{"main.go"},
+		}, "TRIVIAL"},
+		{"small task", &Spec{
+			WritesTo:           []string{"a.go", "b.go", "c.go"},
+			ContextFiles:       []string{"pkg/a.go", "cmd/b.go"},
+			AcceptanceCriteria: []string{"compiles", "tests pass"},
+		}, "SMALL"},
+		{"medium task", &Spec{
+			WritesTo:           []string{"a.go", "b.go", "c.go", "d.go"},
+			ContextFiles:       []string{"x/a.go", "y/b.go", "z/c.go"},
+			AcceptanceCriteria: []string{"1", "2", "3"},
+			AcceptanceChecks:   []Check{{Command: "go test"}},
+		}, "MEDIUM"},
+		{"large task", &Spec{
+			WritesTo:           []string{"a", "b", "c", "d", "e", "f", "g", "h"},
+			ContextFiles:       []string{"w/1", "x/2", "y/3", "z/4"},
+			AcceptanceCriteria: []string{"1", "2", "3", "4", "5", "6"},
+			AcceptanceChecks:   []Check{{Command: "t1"}, {Command: "t2"}, {Command: "t3"}},
+		}, "LARGE"},
+		{"domain boost", &Spec{
+			WritesTo:           []string{"a.go", "b.go", "c.go"},
+			ContextFiles:       []string{"x/a.go", "y/b.go"},
+			AcceptanceCriteria: []string{"1", "2", "3"},
+			Domain:             "security",
+		}, "MEDIUM"},
+		{"many constraints boost", &Spec{
+			WritesTo:     []string{"a.go", "b.go"},
+			ContextFiles: []string{"x/a.go", "y/b.go"},
+			Constraints:  []string{"c1", "c2", "c3", "c4", "c5"},
+		}, "SMALL"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := InferComplexity(tt.spec)
+			if got != tt.want {
+				t.Errorf("InferComplexity() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

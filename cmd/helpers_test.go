@@ -7,6 +7,7 @@ import (
 	"github.com/yosephbernandus/baton/internal/decisions"
 	"github.com/yosephbernandus/baton/internal/knowledge"
 	"github.com/yosephbernandus/baton/internal/phase"
+	"github.com/yosephbernandus/baton/internal/spec"
 )
 
 func TestTruncate(t *testing.T) {
@@ -78,19 +79,34 @@ func TestFindNextPhaseID(t *testing.T) {
 
 func TestResolveComplexity(t *testing.T) {
 	tests := []struct {
-		flag, spec, config, want string
+		name       string
+		flag       string
+		specValue  string
+		s          *spec.Spec
+		config     string
+		want       string
 	}{
-		{"LARGE", "MEDIUM", "SMALL", "LARGE"},
-		{"", "MEDIUM", "SMALL", "MEDIUM"},
-		{"", "", "SMALL", "SMALL"},
-		{"", "", "", phase.ComplexityMedium},
+		{"flag wins", "LARGE", "MEDIUM", nil, "SMALL", "LARGE"},
+		{"spec value wins", "", "MEDIUM", nil, "SMALL", "MEDIUM"},
+		{"config fallback", "", "", nil, "SMALL", "SMALL"},
+		{"ultimate fallback", "", "", nil, "", phase.ComplexityMedium},
+		{"inference from spec fields", "", "", &spec.Spec{
+			WritesTo:           []string{"a", "b", "c", "d", "e", "f", "g", "h"},
+			ContextFiles:       []string{"x/a.go", "y/b.go", "z/c.go", "w/d.go"},
+			AcceptanceCriteria: []string{"1", "2", "3", "4", "5", "6"},
+			AcceptanceChecks:   []spec.Check{{Command: "test1"}, {Command: "test2"}, {Command: "test3"}},
+		}, "SMALL", "LARGE"},
+		{"spec value overrides inference", "", "SMALL", &spec.Spec{
+			WritesTo: []string{"a", "b", "c", "d", "e", "f", "g", "h"},
+		}, "", "SMALL"},
 	}
 	for _, tt := range tests {
-		got := resolveComplexity(tt.flag, tt.spec, tt.config)
-		if got != tt.want {
-			t.Errorf("resolveComplexity(%q, %q, %q) = %q, want %q",
-				tt.flag, tt.spec, tt.config, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveComplexity(tt.flag, tt.specValue, tt.s, tt.config)
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

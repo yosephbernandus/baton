@@ -202,6 +202,60 @@ func TestLoadPatchesNotFound(t *testing.T) {
 	}
 }
 
+func TestGeneratePatchComplexityMismatch(t *testing.T) {
+	a := New(Config{PatchDir: t.TempDir(), MinConfidence: "low"})
+	analysis := &feedback.Analysis{
+		Patterns: []feedback.Pattern{
+			{
+				Type:        "complexity_mismatch",
+				Description: "SMALL tasks trigger L2 cycles 75% of the time",
+				Confidence:  "high",
+				Occurrences: 3,
+				Suggestion:  "Bump default complexity above SMALL or review task specs",
+			},
+		},
+	}
+
+	pf, err := a.GeneratePatches(analysis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pf.Patches) != 1 {
+		t.Fatalf("expected 1 patch, got %d", len(pf.Patches))
+	}
+	p := pf.Patches[0]
+	if p.Pattern != "complexity_mismatch" {
+		t.Errorf("pattern=%q", p.Pattern)
+	}
+	if p.TargetPath != "phase_machine.complexity_default" {
+		t.Errorf("target=%q", p.TargetPath)
+	}
+	if p.ProposedValue != "MEDIUM" {
+		t.Errorf("proposed=%v, want MEDIUM (bump from SMALL)", p.ProposedValue)
+	}
+	if p.Risk != "low" {
+		t.Errorf("risk=%q", p.Risk)
+	}
+}
+
+func TestSuggestComplexityBump(t *testing.T) {
+	tests := []struct {
+		desc string
+		want string
+	}{
+		{"TRIVIAL tasks trigger L2", "SMALL"},
+		{"SMALL tasks trigger L2 cycles 75%", "MEDIUM"},
+		{"MEDIUM tasks trigger L2 cycles 50%", "LARGE"},
+		{"unknown description", "LARGE"},
+	}
+	for _, tt := range tests {
+		got := suggestComplexityBump(tt.desc)
+		if got != tt.want {
+			t.Errorf("suggestComplexityBump(%q) = %q, want %q", tt.desc, got, tt.want)
+		}
+	}
+}
+
 func TestMeetsConfidence(t *testing.T) {
 	tests := []struct {
 		actual, min string

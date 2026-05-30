@@ -153,6 +153,19 @@ func (a *Annealer) patternToPatch(p feedback.Pattern, num int) *Patch {
 			Rationale: fmt.Sprintf("%s (%d occurrences)", p.Description, p.Occurrences),
 		}
 
+	case "complexity_mismatch":
+		return &Patch{
+			ID:            id,
+			Pattern:       p.Type,
+			Description:   p.Suggestion,
+			Confidence:    p.Confidence,
+			Risk:          "low",
+			TargetFile:    ".baton/agents.yaml",
+			TargetPath:    "phase_machine.complexity_default",
+			ProposedValue: suggestComplexityBump(p.Description),
+			Rationale:     fmt.Sprintf("%s (%d occurrences)", p.Description, p.Occurrences),
+		}
+
 	case "timeout_mismatch":
 		return &Patch{
 			ID:            id,
@@ -238,6 +251,20 @@ func meetsConfidence(actual, minimum string) bool {
 func meetsRiskThreshold(actual, maxAllowed string) bool {
 	levels := map[string]int{"low": 1, "medium": 2, "high": 3}
 	return levels[actual] <= levels[maxAllowed]
+}
+
+func suggestComplexityBump(description string) string {
+	desc := strings.ToLower(description)
+	switch {
+	case strings.Contains(desc, "trivial"):
+		return "SMALL"
+	case strings.Contains(desc, "small"):
+		return "MEDIUM"
+	case strings.Contains(desc, "medium"):
+		return "LARGE"
+	default:
+		return "LARGE"
+	}
 }
 
 func isSafetyConfig(targetPath string) bool {

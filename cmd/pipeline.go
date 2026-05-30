@@ -66,7 +66,7 @@ func newPipelineRunCmd() *cobra.Command {
 				return exitError(3, "spec validation failed:\n  %s", strings.Join(msgs, "\n  "))
 			}
 
-			complexity := resolveComplexity(complexityFlag, s.EstimatedComplexity, cfg.PhaseMachine.ComplexityDefault)
+			complexity := resolveComplexity(complexityFlag, s.EstimatedComplexity, s, cfg.PhaseMachine.ComplexityDefault)
 			if !phase.ValidComplexity(complexity) {
 				return exitError(3, "invalid complexity %q, must be TRIVIAL|SMALL|MEDIUM|LARGE", complexity)
 			}
@@ -357,12 +357,17 @@ func printSessionStatus(m *session.Manifest, specPath string) {
 	}
 }
 
-func resolveComplexity(flag, specValue, configDefault string) string {
+func resolveComplexity(flag, specValue string, s *spec.Spec, configDefault string) string {
 	if flag != "" {
 		return flag
 	}
 	if specValue != "" {
 		return specValue
+	}
+	if s != nil {
+		if inferred := spec.InferComplexity(s); inferred != "" {
+			return inferred
+		}
 	}
 	if configDefault != "" {
 		return configDefault

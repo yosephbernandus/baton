@@ -48,7 +48,7 @@ func NewDispatchCmd() *cobra.Command {
 				return exitError(3, "spec validation failed:\n  %s", strings.Join(msgs, "\n  "))
 			}
 
-			complexity := resolveComplexity(complexityFlag, s.EstimatedComplexity, cfg.PhaseMachine.ComplexityDefault)
+			complexity := resolveComplexity(complexityFlag, s.EstimatedComplexity, s, cfg.PhaseMachine.ComplexityDefault)
 			if complexity == "" {
 				complexity = phase.ComplexityMedium
 			}
