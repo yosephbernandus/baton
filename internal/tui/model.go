@@ -635,6 +635,14 @@ func (m *Model) processEvent(ev events.Event) {
 	case "l2_loop_back":
 		t.Status = "completed"
 		t.Progress = "L2 loop back"
+	case "l3_fresh_approach":
+		t.Status = "completed"
+		t.Progress = "L3 fresh approach"
+	case "l2_loopback_by_worker":
+		t.Status = "completed"
+		t.Progress = "L2 loop back"
+	case "pipeline_completed":
+		t.Status = "completed"
 	case "phase_advanced":
 		if name, ok := ev.Data["phase_name"].(string); ok {
 			t.Progress = name
