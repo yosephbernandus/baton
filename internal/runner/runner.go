@@ -374,7 +374,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		}
 	}
 
-	status := r.determineStatusForRuntime(exitCode, clarification, cancelReason.Load(), output, runtimeName)
+	status := r.determineStatusForRuntime(exitCode, clarification, cancelReason.Load(), output, runtimeName, protocolAware.Load())
 
 	var errorDetail string
 	if status == "failed" && exitCode == 0 {
@@ -484,7 +484,7 @@ func BuildToolRestrictionFlags(rt *config.RuntimeConfig, allowedTools []string) 
 	}
 }
 
-func (r *Runner) determineStatusForRuntime(exitCode int, clarification string, reason int32, output []string, runtimeName string) string {
+func (r *Runner) determineStatusForRuntime(exitCode int, clarification string, reason int32, output []string, runtimeName string, protocolAware bool) string {
 	if reason == cancelSilenceTimeout || reason == cancelAbsoluteTimeout {
 		return "timeout"
 	}
@@ -504,7 +504,7 @@ func (r *Runner) determineStatusForRuntime(exitCode int, clarification string, r
 	if exitCode != 0 {
 		return "failed"
 	}
-	if detectOutputError(output) {
+	if !protocolAware && detectOutputError(output) {
 		return "failed"
 	}
 	return "completed"
