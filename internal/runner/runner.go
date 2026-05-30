@@ -307,6 +307,29 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 						"stream": "stdout",
 						"line":   displayLine,
 					})
+					for _, dl := range strings.Split(displayLine, "\n") {
+						if cl := extractClarification(dl); cl != "" {
+							clarification = cl
+						}
+						if mk, ok := proto.ParseMarker(dl); ok {
+							protocolAware.Store(true)
+							if mk.Type == proto.MarkerStuck {
+								isStuck.Store(true)
+							}
+							r.emitMarkerEvent(taskID, runtimeName, model, mk)
+							if srv != nil {
+								_ = srv.Broadcast(proto.MarkerToMessage(mk))
+							}
+						}
+					}
+				}
+				if isResult && rText != "" {
+					for _, rl := range strings.Split(rText, "\n") {
+						if mk, ok := proto.ParseMarker(rl); ok {
+							protocolAware.Store(true)
+							r.emitMarkerEvent(taskID, runtimeName, model, mk)
+						}
+					}
 				}
 				continue
 			}
