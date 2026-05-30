@@ -268,12 +268,15 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 	var output []string
 	var clarification string
 	var lastStoreTouchMs int64
+	isStreamJSON := rt.OutputFormat == "stream-json"
+
 	scanner := bufio.NewScanner(stdout)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
 	for scanner.Scan() {
 		line := scanner.Text()
-		output = append(output, line)
 
-		// Any output counts as liveness.
 		nowMs := time.Now().UnixMilli()
 		lastActivity.Store(nowMs)
 		isStuck.Store(false)
@@ -282,6 +285,25 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 			lastStoreTouchMs = nowMs
 			_ = r.store.TouchActivity(taskID)
 		}
+
+		if isStreamJSON {
+			displayLine, rText, isResult, sjOK := parseStreamJSON(line)
+			if sjOK {
+				output = append(output, line)
+				if isResult && rText != "" {
+					output = append(output, rText)
+				}
+				if displayLine != "" {
+					_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "output", map[string]interface{}{
+						"stream": "stdout",
+						"line":   displayLine,
+					})
+				}
+				continue
+			}
+		}
+
+		output = append(output, line)
 
 		_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "output", map[string]interface{}{
 			"stream": "stdout",

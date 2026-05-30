@@ -57,6 +57,24 @@ runtimes:
       - gemini
       - grok
 
+  # Claude Code with stream-json: enables real-time TUI output during execution.
+  # Without this, claude --print buffers all output until task completes.
+  # Requires: --output-format stream-json --verbose in extra_flags.
+  claude-code:
+    command: "claude"
+    prompt_mode: stdin
+    output_format: stream-json
+    extra_flags:
+      - "--print"
+      - "--output-format"
+      - "stream-json"
+      - "--verbose"
+      - "--dangerously-skip-permissions"
+    models:
+      - claude-opus-4-6
+      - claude-sonnet-4-6
+      - haiku
+
   aider:
     command: "aider"
     model_flag: "--model"

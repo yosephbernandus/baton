@@ -79,8 +79,9 @@ type RuntimeConfig struct {
 	Positional      []string         `yaml:"positional"`
 	Models          []string         `yaml:"models"`
 	ToolRestriction *ToolRestriction `yaml:"tool_restriction,omitempty"`
-	PromptMode      string           `yaml:"prompt_mode,omitempty"` // "stdin" to pipe prompt via stdin instead of CLI arg
+	PromptMode      string           `yaml:"prompt_mode,omitempty"`    // "stdin" to pipe prompt via stdin instead of CLI arg
 	RateLimit       *RateLimitConfig `yaml:"rate_limit,omitempty"`
+	OutputFormat    string           `yaml:"output_format,omitempty"` // "stream-json" for NDJSON parsing
 }
 
 type RateLimitConfig struct {
