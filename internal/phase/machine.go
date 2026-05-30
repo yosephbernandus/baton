@@ -355,7 +355,11 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 			} else if l2Cycles >= maxL2 && IsVerificationPhase(ph.ID) {
 				result.FailReason = fmt.Sprintf("%s (L2 cycles exhausted: %d/%d)", failReason, l2Cycles, maxL2)
 			}
-			p.saveManifestStatus("failed")
+			if strings.HasSuffix(failReason, "(crashed)") {
+				p.saveManifestStatus("crashed")
+			} else {
+				p.saveManifestStatus("failed")
+			}
 			return result, nil
 
 		case outcomeStuck:
@@ -526,6 +530,7 @@ func (p *Pipeline) executePhaseWithRetries(
 	}
 
 	var lastFailReason string
+	var lastCrashed bool
 	totalAttempts := maxRetries + 1
 
 	if p.store != nil {
@@ -575,6 +580,9 @@ func (p *Pipeline) executePhaseWithRetries(
 			if runResult != nil {
 				notes = extractNotes(runResult.Output)
 				output = runResult.Output
+				lastCrashed = runResult.Crashed
+			} else {
+				lastCrashed = true
 			}
 			_ = scratchpad.AppendAttempt(attempt, notes, fmt.Sprintf("runner error: %v", err))
 			lastFailReason = fmt.Sprintf("phase %d (%s) runner error: %v", ph.ID, ph.Name, err)
@@ -735,6 +743,7 @@ func (p *Pipeline) executePhaseWithRetries(
 				return outcomeCompleted, ""
 			}
 			notes := extractNotes(runResult.Output)
+			lastCrashed = runResult.Crashed
 			_ = scratchpad.AppendAttempt(attempt, notes,
 				fmt.Sprintf("worker exited with status %s, no completion promise", runResult.Status))
 			lastFailReason = fmt.Sprintf("phase %d (%s): worker exited with status %s, no completion promise",
@@ -792,6 +801,10 @@ func (p *Pipeline) executePhaseWithRetries(
 	result.FailReason = fmt.Sprintf("%s (after %d attempts)", lastFailReason, totalAttempts)
 	result.AttemptsByPhase[ph.ID] = totalAttempts
 	p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_failed")
+	if lastCrashed {
+		p.finalizePhaseTask(taskID, "failed")
+		return outcomeFailed, lastFailReason + " (crashed)"
+	}
 	p.finalizePhaseTask(taskID, "failed")
 	return outcomeFailed, lastFailReason
 }
@@ -825,6 +838,8 @@ func (p *Pipeline) saveManifestStatus(status string) {
 	switch status {
 	case "completed":
 		p.manifest.MarkCompleted()
+	case "crashed":
+		p.manifest.MarkCrashed()
 	case "failed":
 		p.manifest.MarkFailed("")
 	}

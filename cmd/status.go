@@ -16,6 +16,7 @@ func NewStatusCmd() *cobra.Command {
 	var (
 		jsonOutput bool
 		filter     string
+		recent     int
 	)
 
 	cmd := &cobra.Command{
@@ -46,7 +47,12 @@ func NewStatusCmd() *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStderr(), "reconciled %d stale pipeline manifests\n", subdirN)
 			}
 
-			tasks, err := store.List(filter)
+			var tasks []*task.Task
+			if filter != "" {
+				tasks, err = store.List(filter)
+			} else {
+				tasks, err = store.ListRecent(recent)
+			}
 			if err != nil {
 				return exitError(1, "listing tasks: %v", err)
 			}
@@ -77,5 +83,6 @@ func NewStatusCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 	cmd.Flags().StringVar(&filter, "filter", "", "filter by status")
+	cmd.Flags().IntVar(&recent, "recent", 50, "limit to N most recent tasks")
 	return cmd
 }

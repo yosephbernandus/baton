@@ -102,6 +102,51 @@ func TestCheckResumableSpecChanged(t *testing.T) {
 	}
 }
 
+func TestCheckResumableCrashed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.yaml")
+
+	s := &spec.Spec{What: "test", Why: "testing"}
+	m := New("test", "spec.yaml", "MEDIUM")
+	m.SpecCoreHash = SpecCoreHash(s)
+	m.AdvancePhase(1)
+	m.AdvancePhase(8)
+	m.MarkCrashed()
+	if err := m.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	decision, loaded := CheckResumable(path, s)
+	if decision.Action != "resume" {
+		t.Errorf("action=%s, want resume (crashed should be resumable)", decision.Action)
+	}
+	if decision.StartPhase != 8 {
+		t.Errorf("start_phase=%d, want 8", decision.StartPhase)
+	}
+	if loaded == nil {
+		t.Fatal("loaded manifest should not be nil")
+	}
+}
+
+func TestCheckResumableFailedNotResumable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.yaml")
+
+	s := &spec.Spec{What: "test", Why: "testing"}
+	m := New("test", "spec.yaml", "MEDIUM")
+	m.SpecCoreHash = SpecCoreHash(s)
+	m.AdvancePhase(1)
+	m.MarkFailed("review rejected code")
+	if err := m.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	decision, _ := CheckResumable(path, s)
+	if decision.Action != "fresh" {
+		t.Errorf("action=%s, want fresh (failed should not be resumable)", decision.Action)
+	}
+}
+
 func TestCheckResumableLoopProtection(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.yaml")

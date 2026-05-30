@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -100,9 +101,25 @@ func newPipelineRunCmd() *cobra.Command {
 			emitter, _ := events.NewEmitter(cfg.EventLog)
 
 			r := runner.New(cfg, emitter, store)
+			defer r.KillAll()
 
 			specID := strings.TrimSuffix(filepath.Base(specPath), filepath.Ext(specPath))
 			sessionPath := session.SessionPath(specID)
+
+			lockPath := filepath.Join(".baton", "sessions", specID+".lock")
+			_ = os.MkdirAll(filepath.Dir(lockPath), 0o755)
+			lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0o644)
+			if err != nil {
+				return exitError(1, "creating pipeline lock: %v", err)
+			}
+			defer func() {
+				lockFile.Close()
+				os.Remove(lockPath)
+			}()
+			if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+				lockFile.Close()
+				return exitError(4, "pipeline already running for spec %s (lock held)", specID)
+			}
 
 			allPhases := phase.DefaultPhases()
 			active := phase.ActivePhases(allPhases, complexity)

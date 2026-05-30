@@ -41,6 +41,7 @@ type LivenessConfig struct {
 type Result struct {
 	Status        string
 	ExitCode      int
+	Crashed       bool
 	Clarification string
 	Output        []string
 	ChecksFailed  []string
@@ -60,6 +61,14 @@ type Runner struct {
 
 func New(cfg *config.Config, emitter *events.Emitter, store *task.Store) *Runner {
 	return &Runner{cfg: cfg, emitter: emitter, store: store, procs: make(map[string]*exec.Cmd)}
+}
+
+func (r *Runner) KillAll() {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, cmd := range r.procs {
+		killProcessGroup(cmd)
+	}
 }
 
 func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt string, s *spec.Spec, liveness LivenessConfig, extraArgs ...string) (*Result, error) {
@@ -329,11 +338,16 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 	err = cmd.Wait()
 	duration := time.Since(start)
 	exitCode := 0
+	crashed := false
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
+			if exitCode == 137 || exitCode == -1 {
+				crashed = true
+			}
 		} else {
-			return nil, fmt.Errorf("waiting for worker: %w", err)
+			crashed = true
+			exitCode = -1
 		}
 	}
 
@@ -390,6 +404,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 	return &Result{
 		Status:        status,
 		ExitCode:      exitCode,
+		Crashed:       crashed,
 		Clarification: clarification,
 		Output:        output,
 		FilesChanged:  filesChanged,

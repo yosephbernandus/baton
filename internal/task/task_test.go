@@ -1,6 +1,7 @@
 package task
 
 import (
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -361,5 +362,89 @@ func TestStore_ListEmptyDir(t *testing.T) {
 	}
 	if len(tasks) != 0 {
 		t.Errorf("expected 0 tasks in empty dir, got %d", len(tasks))
+	}
+}
+
+func TestStore_OutputTailCapped(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewStore(dir)
+
+	lines := make([]string, 200)
+	for i := range lines {
+		lines[i] = "line"
+	}
+	tk := &Task{
+		ID:         "tail-test",
+		Status:     "completed",
+		OutputTail: lines,
+		CreatedAt:  time.Now().UTC(),
+	}
+	if err := store.Create(tk); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.Get("tail-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.OutputTail) != maxOutputTailLines {
+		t.Errorf("expected %d lines, got %d", maxOutputTailLines, len(got.OutputTail))
+	}
+}
+
+func TestStore_ListRecent(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewStore(dir)
+
+	for i := 0; i < 10; i++ {
+		tk := &Task{
+			ID:        fmt.Sprintf("task-%03d", i),
+			Status:    "completed",
+			CreatedAt: time.Now().UTC(),
+		}
+		_ = store.Create(tk)
+	}
+
+	tasks, err := store.ListRecent(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 3 {
+		t.Errorf("expected 3 tasks, got %d", len(tasks))
+	}
+}
+
+func TestStore_ListRecentAll(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewStore(dir)
+
+	for i := 0; i < 5; i++ {
+		tk := &Task{
+			ID:        fmt.Sprintf("task-%03d", i),
+			Status:    "completed",
+			CreatedAt: time.Now().UTC(),
+		}
+		_ = store.Create(tk)
+	}
+
+	tasks, err := store.ListRecent(100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 5 {
+		t.Errorf("expected 5 tasks, got %d", len(tasks))
+	}
+}
+
+func TestStore_ListRecentDefault(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewStore(dir)
+
+	tasks, err := store.ListRecent(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tasks != nil {
+		t.Errorf("expected nil for empty dir, got %v", tasks)
 	}
 }

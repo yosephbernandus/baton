@@ -205,7 +205,13 @@ func (s *Store) TouchActivity(id string) error {
 	return s.Update(t)
 }
 
+const maxOutputTailLines = 100
+
 func (s *Store) write(t *Task) error {
+	if len(t.OutputTail) > maxOutputTailLines {
+		t.OutputTail = t.OutputTail[len(t.OutputTail)-maxOutputTailLines:]
+	}
+
 	data, err := yaml.Marshal(t)
 	if err != nil {
 		return fmt.Errorf("marshaling task: %w", err)
@@ -219,4 +225,37 @@ func (s *Store) write(t *Task) error {
 	}
 
 	return os.Rename(tmpPath, finalPath)
+}
+
+func (s *Store) ListRecent(limit int) ([]*Task, error) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("listing tasks: %w", err)
+	}
+
+	if limit <= 0 {
+		limit = 50
+	}
+
+	start := 0
+	if len(entries) > limit {
+		start = len(entries) - limit
+	}
+
+	var tasks []*Task
+	for _, e := range entries[start:] {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".yaml" {
+			continue
+		}
+		id := e.Name()[:len(e.Name())-5]
+		t, err := s.Get(id)
+		if err != nil {
+			continue
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, nil
 }
