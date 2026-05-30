@@ -286,6 +286,329 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func TestDetectLanguages(t *testing.T) {
+	dir := t.TempDir()
+	writeGoFile(t, dir, "main.go", `package main`)
+	writeGoFile(t, dir, "handler.go", `package main`)
+	writeFile(t, filepath.Join(dir, "style.css"), `body {}`)
+
+	langs := DetectLanguages(dir)
+	if len(langs) == 0 {
+		t.Fatal("expected at least 1 language")
+	}
+	if langs[0].Name != "go" {
+		t.Errorf("expected go as primary language, got %s", langs[0].Name)
+	}
+	if langs[0].FileCount != 2 {
+		t.Errorf("expected 2 go files, got %d", langs[0].FileCount)
+	}
+}
+
+func TestDetectLanguagesSkipsVendor(t *testing.T) {
+	dir := t.TempDir()
+	writeGoFile(t, dir, "main.go", `package main`)
+	writeFile(t, filepath.Join(dir, "vendor", "lib.go"), `package lib`)
+	writeFile(t, filepath.Join(dir, "node_modules", "index.js"), `module.exports = {}`)
+
+	langs := DetectLanguages(dir)
+	goCount := 0
+	for _, l := range langs {
+		if l.Name == "go" {
+			goCount = l.FileCount
+		}
+	}
+	if goCount != 1 {
+		t.Errorf("vendor .go should be excluded, expected 1, got %d", goCount)
+	}
+}
+
+func TestDetectLanguagesEmpty(t *testing.T) {
+	dir := t.TempDir()
+	langs := DetectLanguages(dir)
+	if len(langs) != 0 {
+		t.Errorf("expected 0 languages for empty dir, got %d", len(langs))
+	}
+}
+
+func TestDetectLanguage(t *testing.T) {
+	dir := t.TempDir()
+	writeGoFile(t, dir, "main.go", `package main`)
+	if got := DetectLanguage(dir); got != "go" {
+		t.Errorf("expected go, got %s", got)
+	}
+
+	emptyDir := t.TempDir()
+	if got := DetectLanguage(emptyDir); got != "" {
+		t.Errorf("expected empty, got %s", got)
+	}
+}
+
+func TestTopDomain(t *testing.T) {
+	signals := []DomainSignal{
+		{Domain: "api", Score: 5.0},
+		{Domain: "auth", Score: 3.0},
+	}
+	if got := TopDomain(signals); got != "api" {
+		t.Errorf("expected api, got %s", got)
+	}
+
+	if got := TopDomain(nil); got != "" {
+		t.Errorf("expected empty for nil, got %s", got)
+	}
+}
+
+func TestSymbolKindName(t *testing.T) {
+	tests := []struct {
+		kind int
+		want string
+	}{
+		{SymbolKindClass, "class"},
+		{SymbolKindMethod, "method"},
+		{SymbolKindField, "field"},
+		{SymbolKindInterface, "interface"},
+		{SymbolKindFunction, "function"},
+		{SymbolKindVariable, "variable"},
+		{SymbolKindConstant, "constant"},
+		{SymbolKindStruct, "struct"},
+		{999, "unknown"},
+	}
+	for _, tt := range tests {
+		got := SymbolKindName(tt.kind)
+		if got != tt.want {
+			t.Errorf("SymbolKindName(%d) = %q, want %q", tt.kind, got, tt.want)
+		}
+	}
+}
+
+func TestHashDir(t *testing.T) {
+	dir := t.TempDir()
+	writeGoFile(t, dir, "main.go", `package main`)
+	writeGoFile(t, dir, "util.go", `package main`)
+
+	h1 := hashDir(dir)
+	if len(h1) != 16 {
+		t.Errorf("expected 16 char hash, got %d: %s", len(h1), h1)
+	}
+
+	// Same content → same hash
+	h2 := hashDir(dir)
+	if h1 != h2 {
+		t.Error("same dir should produce same hash")
+	}
+
+	// Modify file → different hash
+	writeGoFile(t, dir, "main.go", `package main
+func NewFunc() {}`)
+	h3 := hashDir(dir)
+	if h1 == h3 {
+		t.Error("modified file should change hash")
+	}
+}
+
+func TestHashDirIgnoresTestFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeGoFile(t, dir, "main.go", `package main`)
+
+	h1 := hashDir(dir)
+
+	writeGoFile(t, dir, "main_test.go", `package main`)
+	h2 := hashDir(dir)
+
+	if h1 != h2 {
+		t.Error("test files should not affect hash")
+	}
+}
+
+func TestSlugifyPackage(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"example.com/app/api", "example-com-app-api"},
+		{"main", "main"},
+		{"a/b.c/d", "a-b-c-d"},
+	}
+	for _, tt := range tests {
+		got := slugifyPackage(tt.input)
+		if got != tt.want {
+			t.Errorf("slugifyPackage(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestBuildIndex(t *testing.T) {
+	facts := []*PackageFact{
+		{
+			Package: "example.com/app",
+			Path:    "/tmp/app",
+			Imports: []string{"fmt"},
+			Functions: []FunctionFact{
+				{Name: "Main", Exported: true},
+				{Name: "helper", Exported: false},
+			},
+			Types: []TypeFact{
+				{Name: "Config", Exported: true},
+			},
+		},
+	}
+	graph := BuildGraph(facts)
+	index := buildIndex(graph)
+
+	if len(index) != 1 {
+		t.Fatalf("expected 1 index entry, got %d", len(index))
+	}
+	if index[0].Exports != 2 {
+		t.Errorf("expected 2 exports (Main + Config), got %d", index[0].Exports)
+	}
+	if index[0].ImportN != 1 {
+		t.Errorf("expected 1 import, got %d", index[0].ImportN)
+	}
+}
+
+func TestFileToPackage(t *testing.T) {
+	tests := []struct {
+		file, mod, want string
+	}{
+		{"api/handler.go", "example.com/app", "example.com/app/api"},
+		{"main.go", "example.com/app", "example.com/app"},
+		{"main.go", "", ""},
+		{"internal/config/config.go", "example.com/app", "example.com/app/internal/config"},
+		{"internal/config/config.go", "", "internal/config"},
+	}
+	for _, tt := range tests {
+		got := fileToPackage(tt.file, tt.mod)
+		if got != tt.want {
+			t.Errorf("fileToPackage(%q, %q) = %q, want %q", tt.file, tt.mod, got, tt.want)
+		}
+	}
+}
+
+func TestLoadHealth(t *testing.T) {
+	dir := t.TempDir()
+	writeGoFile(t, dir, "main.go", `package main
+func Hello() {}
+`)
+	writeFile(t, filepath.Join(dir, "go.mod"), "module test\n\ngo 1.22\n")
+
+	result, err := Compile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(dir, result.Graph, result.Health); err != nil {
+		t.Fatal(err)
+	}
+
+	health, err := LoadHealth(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if health.PackageCount != 1 {
+		t.Errorf("expected 1 package, got %d", health.PackageCount)
+	}
+	if health.FunctionCount != 1 {
+		t.Errorf("expected 1 function, got %d", health.FunctionCount)
+	}
+}
+
+func TestLoadHealthMissing(t *testing.T) {
+	dir := t.TempDir()
+	_, err := LoadHealth(dir)
+	if err == nil {
+		t.Error("expected error for missing health file")
+	}
+}
+
+func TestModuleRoot(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module test\n")
+
+	subDir := filepath.Join(dir, "internal", "config")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := moduleRoot(subDir, "test")
+	if got != dir {
+		t.Errorf("expected %s, got %s", dir, got)
+	}
+}
+
+func TestHasGoFiles(t *testing.T) {
+	dir := t.TempDir()
+	if hasGoFiles(dir) {
+		t.Error("empty dir should have no go files")
+	}
+
+	writeGoFile(t, dir, "main.go", `package main`)
+	if !hasGoFiles(dir) {
+		t.Error("should detect go files")
+	}
+}
+
+func TestFindGoPackages(t *testing.T) {
+	dir := t.TempDir()
+	writeGoFile(t, dir, "main.go", `package main`)
+	if err := os.MkdirAll(filepath.Join(dir, "internal", "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "internal", "config", "config.go"), `package config`)
+
+	pkgs, err := findGoPackages(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 2 {
+		t.Errorf("expected 2 packages, got %d: %v", len(pkgs), pkgs)
+	}
+}
+
+func TestFindGoPackagesSkipsVendor(t *testing.T) {
+	dir := t.TempDir()
+	writeGoFile(t, dir, "main.go", `package main`)
+	writeFile(t, filepath.Join(dir, "vendor", "lib", "lib.go"), `package lib`)
+
+	pkgs, err := findGoPackages(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 {
+		t.Errorf("expected 1 package (vendor excluded), got %d", len(pkgs))
+	}
+}
+
+func TestReadModulePath(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/myapp\n\ngo 1.22\n")
+
+	mod, err := readModulePath(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mod != "example.com/myapp" {
+		t.Errorf("expected example.com/myapp, got %s", mod)
+	}
+}
+
+func TestReadModulePathMissing(t *testing.T) {
+	dir := t.TempDir()
+	_, err := readModulePath(dir)
+	if err == nil {
+		t.Error("expected error for missing go.mod")
+	}
+}
+
+func TestFindPackageByPath(t *testing.T) {
+	graph := BuildGraph([]*PackageFact{
+		{Package: "example.com/app", Path: "/tmp/app"},
+		{Package: "example.com/lib", Path: "/tmp/lib"},
+	})
+	if got := findPackageByPath(graph, "/tmp/app"); got != "example.com/app" {
+		t.Errorf("expected example.com/app, got %s", got)
+	}
+	if got := findPackageByPath(graph, "/nonexistent"); got != "" {
+		t.Errorf("expected empty for missing path, got %s", got)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
 }
