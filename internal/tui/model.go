@@ -231,6 +231,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.scrollToCursor()
 						m.onCursorChanged()
 					}
+				case "G", "end":
+					if len(visible) > 0 {
+						m.cursor = len(visible) - 1
+						m.scrollToCursor()
+						m.onCursorChanged()
+					}
+				case "g", "home":
+					m.cursor = 0
+					m.scrollToCursor()
+					m.onCursorChanged()
 				}
 			}
 		}
@@ -242,6 +252,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Wide hit area: ±2 rows around divider
 			if msg.Y >= m.dividerRow-2 && msg.Y <= m.dividerRow+2 {
 				m.dragging = true
+			}
+		}
+		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+			visible := m.visibleTasks()
+			taskAreaEnd := 3 + m.maxVisibleTasks() + m.scrollIndicatorLines()
+			inTaskArea := msg.Y >= 3 && msg.Y < taskAreaEnd
+			if (m.focus == focusTaskList || inTaskArea) && !m.showOutput || (m.showOutput && inTaskArea) {
+				if msg.Button == tea.MouseButtonWheelUp && m.cursor > 0 {
+					m.cursor--
+					m.scrollToCursor()
+					m.onCursorChanged()
+				} else if msg.Button == tea.MouseButtonWheelDown && m.cursor < len(visible)-1 {
+					m.cursor++
+					m.scrollToCursor()
+					m.onCursorChanged()
+				}
 			}
 		}
 		if msg.Action == tea.MouseActionMotion && m.dragging && m.showOutput {
