@@ -415,6 +415,8 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		"duration":  duration.Round(time.Second).String(),
 	})
 
+	killProcessGroup(cmd)
+
 	r.mu.Lock()
 	delete(r.procs, taskID)
 	r.mu.Unlock()
