@@ -50,6 +50,10 @@ func TestHasUpstreamChangesEmptyFiles(t *testing.T) {
 	}
 }
 
+func init() {
+	checkUncommittedChanges = func() bool { return false }
+}
+
 func TestShouldSkipDirtyBitDisabled(t *testing.T) {
 	disabled := false
 	cfg := testConfig(0)
