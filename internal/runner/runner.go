@@ -374,7 +374,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		}
 	}
 
-	status := r.determineStatusForRuntime(exitCode, clarification, cancelReason.Load(), output, runtimeName, protocolAware.Load())
+	status := r.determineStatusForRuntime(exitCode, clarification, cancelReason.Load(), output, runtimeName, protocolAware.Load() || isStreamJSON)
 
 	var errorDetail string
 	if status == "failed" && exitCode == 0 {
