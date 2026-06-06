@@ -58,7 +58,7 @@ func formatSystemEvent(ev *streamEvent) string {
 	case "init":
 		return "[init] session started"
 	case "hook", "hook_started", "hook_response",
-		"api_retry":
+		"api_retry", "thinking_tokens":
 		return ""
 	default:
 		return fmt.Sprintf("[system] %s", ev.Subtype)
