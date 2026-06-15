@@ -251,7 +251,8 @@ func (p *Pipeline) Run(ctx context.Context) (*PipelineResult, error) {
 			return result, nil
 
 		case outcomeFailed:
-			if IsVerificationPhase(ph.ID) && l2Cycles < maxL2 {
+			isCrashFailure := strings.HasSuffix(failReason, "(crashed)")
+			if IsVerificationPhase(ph.ID) && l2Cycles < maxL2 && !isCrashFailure {
 				l2Cycles++
 				result.L2Cycles = l2Cycles
 
