@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/yosephbernandus/baton/internal/config"
+	"github.com/yosephbernandus/baton/internal/proto"
 	"github.com/yosephbernandus/baton/internal/runner"
 	"github.com/yosephbernandus/baton/internal/spec"
 )
@@ -33,7 +34,14 @@ func (m *mockRunner) Run(_ context.Context, _, runtimeName, model, prompt string
 	m.runtimes = append(m.runtimes, runtimeName)
 	m.models = append(m.models, model)
 	if i < len(m.results) {
-		return m.results[i], m.errors[i]
+		res := m.results[i]
+		// Mirror the exec transport: stdout lines are parsed into events once,
+		// at the transport boundary. Fixtures declare Output; the pipeline
+		// reads Events.
+		if res != nil && res.Events == nil {
+			res.Events = eventsFromLines(res.Output)
+		}
+		return res, m.errors[i]
 	}
 	return nil, fmt.Errorf("unexpected call %d", i)
 }
@@ -241,6 +249,19 @@ func TestPipelineNoRetryWhenMaxZero(t *testing.T) {
 	}
 }
 
+// eventsFromLines mirrors what the exec transport does: parse each stdout line
+// once into a marker event. Tests feed lines; the helpers under test consume
+// events, same as the pipeline does.
+func eventsFromLines(lines []string) []proto.Event {
+	var evs []proto.Event
+	for _, l := range lines {
+		if mk, ok := proto.ParseMarker(l); ok {
+			evs = append(evs, proto.MarkerEvent(mk, l))
+		}
+	}
+	return evs
+}
+
 func TestExtractNotes(t *testing.T) {
 	output := []string{
 		"BATON:H:working",
@@ -250,7 +271,7 @@ func TestExtractNotes(t *testing.T) {
 		"BATON:C:setup:done",
 	}
 
-	notes := extractNotes(output)
+	notes := extractNotes(eventsFromLines(output))
 	if len(notes) != 2 {
 		t.Fatalf("got %d notes, want 2", len(notes))
 	}
@@ -796,14 +817,14 @@ func TestCountHeartbeats(t *testing.T) {
 		"BATON:H:almost done",
 		"BATON:C:setup:done",
 	}
-	if c := countHeartbeats(output); c != 3 {
+	if c := countHeartbeats(eventsFromLines(output)); c != 3 {
 		t.Errorf("count=%d, want 3", c)
 	}
 }
 
 func TestCountHeartbeatsNone(t *testing.T) {
 	output := []string{"plain output", "BATON:C:setup:done"}
-	if c := countHeartbeats(output); c != 0 {
+	if c := countHeartbeats(eventsFromLines(output)); c != 0 {
 		t.Errorf("count=%d, want 0", c)
 	}
 }

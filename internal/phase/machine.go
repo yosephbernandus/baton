@@ -579,7 +579,7 @@ func (p *Pipeline) executePhaseWithRetries(
 			var notes []string
 			var output []string
 			if runResult != nil {
-				notes = extractNotes(runResult.Output)
+				notes = extractNotes(runResult.Events)
 				output = runResult.Output
 				lastCrashed = runResult.Crashed
 			} else {
@@ -638,7 +638,7 @@ func (p *Pipeline) executePhaseWithRetries(
 
 		// Heartbeat budget check
 		if budget := p.cfg.PhaseMachine.HeartbeatBudget; budget > 0 {
-			hbCount := countHeartbeats(runResult.Output)
+			hbCount := countHeartbeats(runResult.Events)
 			if hbCount > budget {
 				budgetMsg := fmt.Sprintf("heartbeat budget exceeded: %d/%d", hbCount, budget)
 				_ = scratchpad.AppendAttempt(attempt, []string{budgetMsg}, budgetMsg)
@@ -654,7 +654,7 @@ func (p *Pipeline) executePhaseWithRetries(
 			}
 		}
 
-		completion := extractCompletion(runResult.Output, ph.CompletionSignal)
+		completion := extractCompletion(runResult.Events, ph.CompletionSignal)
 
 		switch {
 		case completion.Status == "done":
@@ -680,14 +680,14 @@ func (p *Pipeline) executePhaseWithRetries(
 			}
 			result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
 			result.AttemptsByPhase[ph.ID] = attempt
-			p.lastPhaseNotes = extractNotes(runResult.Output)
-			p.lastPhaseErrors = extractErrors(runResult.Output)
+			p.lastPhaseNotes = extractNotes(runResult.Events)
+			p.lastPhaseErrors = extractErrors(runResult.Events)
 			p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
 			p.finalizePhaseTask(taskID, "completed")
 			return outcomeCompleted, ""
 
 		case completion.Status == "fail":
-			notes := extractNotes(runResult.Output)
+			notes := extractNotes(runResult.Events)
 			_ = scratchpad.AppendAttempt(attempt, notes, completion.Detail)
 			lastFailReason = fmt.Sprintf("phase %d (%s): %s", ph.ID, ph.Name, completion.Detail)
 			if loopDetector != nil {
@@ -737,13 +737,13 @@ func (p *Pipeline) executePhaseWithRetries(
 				}
 				result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
 				result.AttemptsByPhase[ph.ID] = attempt
-				p.lastPhaseNotes = extractNotes(runResult.Output)
-				p.lastPhaseErrors = extractErrors(runResult.Output)
+				p.lastPhaseNotes = extractNotes(runResult.Events)
+				p.lastPhaseErrors = extractErrors(runResult.Events)
 				p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
 				p.finalizePhaseTask(taskID, "completed")
 				return outcomeCompleted, ""
 			}
-			notes := extractNotes(runResult.Output)
+			notes := extractNotes(runResult.Events)
 			lastCrashed = runResult.Crashed
 			_ = scratchpad.AppendAttempt(attempt, notes,
 				fmt.Sprintf("worker exited with status %s, no completion promise", runResult.Status))
@@ -781,15 +781,15 @@ func (p *Pipeline) executePhaseWithRetries(
 			p.emitPhaseRetryEvent(taskID, runtimeName, model, ph, totalAttempts+1)
 			runResult, err := p.runner.Run(ctx, taskID, runtimeName, model, phasePrompt, p.spec, liveness, toolRestrictionFlags...)
 			if err == nil {
-				completion := extractCompletion(runResult.Output, ph.CompletionSignal)
+				completion := extractCompletion(runResult.Events, ph.CompletionSignal)
 				if completion.Status == "done" || runResult.Status == "completed" {
 					if len(runResult.FilesChanged) > 0 {
 						result.DirtyFiles[ph.ID] = runResult.FilesChanged
 					}
 					result.PhasesCompleted = append(result.PhasesCompleted, ph.ID)
 					result.AttemptsByPhase[ph.ID] = totalAttempts + 1
-					p.lastPhaseNotes = extractNotes(runResult.Output)
-					p.lastPhaseErrors = extractErrors(runResult.Output)
+					p.lastPhaseNotes = extractNotes(runResult.Events)
+					p.lastPhaseErrors = extractErrors(runResult.Events)
 					p.emitPhaseEvent(taskID, runtimeName, model, ph, "phase_completed")
 					p.finalizePhaseTask(taskID, "completed")
 					return outcomeCompleted, ""
@@ -1177,54 +1177,24 @@ func (p *Pipeline) emitL3Event(failedPhase Phase, cycle int, reason string) {
 		data)
 }
 
-func extractCompletion(output []string, expectedSignal string) proto.CompletionPromise {
-	for i := len(output) - 1; i >= 0; i-- {
-		mk, ok := proto.ParseMarker(output[i])
-		if !ok || mk.Type != proto.MarkerComplete {
-			continue
-		}
-		cp, ok := proto.ParseCompletion(mk)
-		if !ok {
-			continue
-		}
-		if cp.Phase == expectedSignal {
-			return cp
-		}
-	}
-	return proto.CompletionPromise{}
+// The extract* helpers read the transport-neutral event stream, not raw stdout.
+// A transport that never produces text lines still drives the phase machine.
+
+func extractCompletion(events []proto.Event, expectedSignal string) proto.CompletionPromise {
+	cp, _ := proto.LastCompletion(events, expectedSignal)
+	return cp
 }
 
-func extractNotes(output []string) []string {
-	var notes []string
-	for _, line := range output {
-		mk, ok := proto.ParseMarker(line)
-		if ok && mk.Type == proto.MarkerNote {
-			notes = append(notes, mk.Msg)
-		}
-	}
-	return notes
+func extractNotes(events []proto.Event) []string {
+	return proto.Notes(events)
 }
 
-func extractErrors(output []string) []string {
-	var errs []string
-	for _, line := range output {
-		mk, ok := proto.ParseMarker(line)
-		if ok && mk.Type == proto.MarkerError {
-			errs = append(errs, mk.Msg)
-		}
-	}
-	return errs
+func extractErrors(events []proto.Event) []string {
+	return proto.Errors(events)
 }
 
-func countHeartbeats(output []string) int {
-	count := 0
-	for _, line := range output {
-		mk, ok := proto.ParseMarker(line)
-		if ok && mk.Type == proto.MarkerHeartbeat {
-			count++
-		}
-	}
-	return count
+func countHeartbeats(events []proto.Event) int {
+	return proto.CountHeartbeats(events)
 }
 
 func (p *Pipeline) estimatePromptTokens(basePrompt string, dirtyFiles map[int][]string, currentPhase Phase, l2Active, l3Active bool) int {

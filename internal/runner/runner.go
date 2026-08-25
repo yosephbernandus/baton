@@ -44,11 +44,14 @@ type Result struct {
 	Crashed       bool
 	Clarification string
 	Output        []string
-	ChecksFailed  []string
-	FilesChanged  []string
-	Duration      time.Duration
-	SocketPath    string
-	ErrorDetail   string
+	// Events is the transport-neutral view of Output. The pipeline reads this
+	// and never re-parses raw lines; transports without stdout still fill it.
+	Events       []proto.Event
+	ChecksFailed []string
+	FilesChanged []string
+	Duration     time.Duration
+	SocketPath   string
+	ErrorDetail  string
 }
 
 type Runner struct {
@@ -275,6 +278,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 	}()
 
 	var output []string
+	var events []proto.Event
 	var clarification string
 	var lastStoreTouchMs int64
 	isStreamJSON := rt.OutputFormat == "stream-json"
@@ -313,6 +317,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 						}
 						if mk, ok := proto.ParseMarker(dl); ok {
 							protocolAware.Store(true)
+							events = append(events, proto.MarkerEvent(mk, dl))
 							if mk.Type == proto.MarkerStuck {
 								isStuck.Store(true)
 							}
@@ -327,6 +332,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 					for _, rl := range strings.Split(rText, "\n") {
 						if mk, ok := proto.ParseMarker(rl); ok {
 							protocolAware.Store(true)
+							events = append(events, proto.MarkerEvent(mk, rl))
 							r.emitMarkerEvent(taskID, runtimeName, model, mk)
 						}
 					}
@@ -348,6 +354,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 
 		if mk, ok := proto.ParseMarker(line); ok {
 			protocolAware.Store(true)
+			events = append(events, proto.MarkerEvent(mk, line))
 			if mk.Type == proto.MarkerStuck {
 				isStuck.Store(true)
 			}
@@ -389,6 +396,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 				Status:       status,
 				ExitCode:     exitCode,
 				Output:       output,
+				Events:       events,
 				ChecksFailed: failed,
 				Duration:     duration,
 			}, nil
@@ -432,6 +440,7 @@ func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt str
 		Crashed:       crashed,
 		Clarification: clarification,
 		Output:        output,
+		Events:        events,
 		FilesChanged:  filesChanged,
 		Duration:      duration,
 		SocketPath:    socketPathResult,
