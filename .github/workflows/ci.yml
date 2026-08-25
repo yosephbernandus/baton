@@ -31,3 +31,38 @@ jobs:
       - run: go build -o baton .
       - run: go test -race ./...
       - run: go vet ./...
+
+  # Report when the vendored ACP schema drifts from upstream. This never applies
+  # a change: a schema move is a decision to make by hand, reading the diff and
+  # updating internal/acp/types.go alongside it. Advisory so an upstream edit
+  # cannot break an unrelated pull request.
+  acp-schema-drift:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare vendored schema against upstream
+        run: |
+          set -uo pipefail
+          pinned=$(grep -E '^sha256:' internal/acp/schema/v1/SOURCE | awk '{print $2}')
+          local_sum=$(sha256sum internal/acp/schema/v1/schema.json | awk '{print $1}')
+          if [ "$pinned" != "$local_sum" ]; then
+            echo "::error::Vendored schema does not match the checksum in SOURCE."
+            echo "  SOURCE: $pinned"
+            echo "  file:   $local_sum"
+            exit 1
+          fi
+          url=https://raw.githubusercontent.com/zed-industries/agent-client-protocol/main/schema/v1/schema.json
+          if ! upstream=$(curl -sSfL "$url" | sha256sum | awk '{print $1}'); then
+            echo "::notice::Could not reach upstream schema; skipping drift check."
+            exit 0
+          fi
+          if [ "$upstream" != "$pinned" ]; then
+            echo "::warning::ACP schema drifted upstream."
+            echo "  pinned:   $pinned"
+            echo "  upstream: $upstream"
+            echo "Read the diff, decide whether protocol v1 semantics moved, then"
+            echo "update schema.json, SOURCE and internal/acp/types.go together."
+            exit 1
+          fi
+          echo "Vendored ACP schema matches upstream."
