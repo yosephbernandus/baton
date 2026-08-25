@@ -10,6 +10,7 @@ import (
 	"github.com/yosephbernandus/baton/internal/config"
 	"github.com/yosephbernandus/baton/internal/events"
 	"github.com/yosephbernandus/baton/internal/task"
+	"github.com/yosephbernandus/baton/internal/transport"
 )
 
 func setupTestRunner(t *testing.T) (*Runner, *task.Store, string) {
@@ -85,7 +86,13 @@ func TestLiveness_ActiveWorkerNotKilled(t *testing.T) {
 	}
 	defer os.RemoveAll(".baton/tasks/" + taskID)
 
-	result, err := r.Run(context.Background(), taskID, "mock", "default", script, nil, liveness)
+	result, err := r.Execute(context.Background(), transport.Request{
+		TaskID:      taskID,
+		RuntimeName: "mock",
+		Model:       "default",
+		Prompt:      script,
+		Liveness:    liveness,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +125,13 @@ func TestLiveness_SilentWorkerKilled(t *testing.T) {
 	defer os.RemoveAll(".baton/tasks/" + taskID)
 
 	start := time.Now()
-	result, err := r.Run(context.Background(), taskID, "mock", "default", script, nil, liveness)
+	result, err := r.Execute(context.Background(), transport.Request{
+		TaskID:      taskID,
+		RuntimeName: "mock",
+		Model:       "default",
+		Prompt:      script,
+		Liveness:    liveness,
+	})
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -156,7 +169,13 @@ func TestLiveness_NonProtocolUsesAbsoluteTimeout(t *testing.T) {
 	defer os.RemoveAll(".baton/tasks/" + taskID)
 
 	start := time.Now()
-	result, err := r.Run(context.Background(), taskID, "mock", "default", script, nil, liveness)
+	result, err := r.Execute(context.Background(), transport.Request{
+		TaskID:      taskID,
+		RuntimeName: "mock",
+		Model:       "default",
+		Prompt:      script,
+		Liveness:    liveness,
+	})
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -193,7 +212,13 @@ func TestLiveness_StuckWorkerNotKilled(t *testing.T) {
 	}
 	defer os.RemoveAll(".baton/tasks/" + taskID)
 
-	result, err := r.Run(context.Background(), taskID, "mock", "default", script, nil, liveness)
+	result, err := r.Execute(context.Background(), transport.Request{
+		TaskID:      taskID,
+		RuntimeName: "mock",
+		Model:       "default",
+		Prompt:      script,
+		Liveness:    liveness,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

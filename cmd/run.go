@@ -21,6 +21,7 @@ import (
 	"github.com/yosephbernandus/baton/internal/runner"
 	"github.com/yosephbernandus/baton/internal/spec"
 	"github.com/yosephbernandus/baton/internal/task"
+	"github.com/yosephbernandus/baton/internal/transport"
 )
 
 func NewRunCmd() *cobra.Command {
@@ -229,7 +230,14 @@ func NewRunCmd() *cobra.Command {
 			_ = store.Update(t)
 
 			r := runner.New(cfg, emitter, store)
-			result, err := r.Run(ctx, taskID, runtimeName, model, prompt, s, liveness)
+			result, err := r.Execute(ctx, transport.Request{
+				TaskID:      taskID,
+				RuntimeName: runtimeName,
+				Model:       model,
+				Prompt:      prompt,
+				Spec:        s,
+				Liveness:    liveness,
+			})
 
 			if s != nil && len(s.WritesTo) > 0 {
 				_ = lockReg.Release(taskID)
