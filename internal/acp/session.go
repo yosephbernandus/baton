@@ -49,17 +49,29 @@ func newSession(conn *Conn, allowedTools []string, log func(string, ...any)) *se
 		toolKind: make(map[string]string),
 		log:      log,
 	}
-	if len(allowedTools) > 0 {
-		s.restricted = true
-		s.allowedTools = make(map[string]bool, len(allowedTools))
-		for _, t := range allowedTools {
-			s.allowedTools[t] = true
-		}
-	}
+	s.setBoundary(allowedTools)
 	if s.log == nil {
 		s.log = func(string, ...any) {}
 	}
 	return s
+}
+
+// setBoundary installs the role's tool list. Empty means unrestricted, which is
+// what a probe uses: it establishes what the agent offers without asking for a
+// restriction that would change session state.
+func (s *session) setBoundary(allowedTools []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(allowedTools) == 0 {
+		s.restricted = false
+		s.allowedTools = nil
+		return
+	}
+	s.restricted = true
+	s.allowedTools = make(map[string]bool, len(allowedTools))
+	for _, t := range allowedTools {
+		s.allowedTools[t] = true
+	}
 }
 
 // Notify handles inbound notifications. Unknown methods are ignored: an agent
@@ -97,7 +109,11 @@ func (s *session) Request(_ context.Context, method string, params json.RawMessa
 func (s *session) decidePermission(p requestPermissionParams) requestPermissionResponse {
 	name := toolName(p.ToolCall)
 
-	if s.restricted && !s.allowedTools[name] {
+	s.mu.Lock()
+	restricted, allowed := s.restricted, s.allowedTools[name]
+	s.mu.Unlock()
+
+	if restricted && !allowed {
 		s.recordEvent(proto.Event{
 			Marker: markerPtr(proto.Marker{
 				Type: proto.MarkerNote,

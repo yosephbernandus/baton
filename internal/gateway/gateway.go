@@ -6,12 +6,13 @@ import (
 
 	"github.com/yosephbernandus/baton/internal/config"
 	"github.com/yosephbernandus/baton/internal/spec"
+	"github.com/yosephbernandus/baton/internal/transport"
 )
 
 type Severity int
 
 const (
-	SeverityWarn  Severity = iota
+	SeverityWarn Severity = iota
 	SeverityError
 )
 
@@ -35,6 +36,12 @@ type Input struct {
 	Runtimes   []string
 	Complexity string
 	Mode       string // "run" or "pipeline"
+
+	// RoleRuntimes maps each role to the runtime it will run on, and Caps looks
+	// up what that runtime can do. Both are optional: without them the
+	// capability check is skipped rather than guessed at.
+	RoleRuntimes map[string]string
+	Caps         func(runtimeName string) (transport.Caps, bool)
 }
 
 type Report struct {
@@ -82,6 +89,7 @@ func Preflight(in Input) *Report {
 
 	if in.Mode == "pipeline" {
 		findings = append(findings, CheckActivePhases(in.Complexity)...)
+		findings = append(findings, CheckRoleCapabilities(in.RoleRuntimes, in.Caps)...)
 	}
 
 	return &Report{Findings: findings}

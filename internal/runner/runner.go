@@ -63,7 +63,9 @@ func (r *Runner) KillAll() {
 // usage, touched-file reporting, a session spanning phases) is absent by
 // construction, because all this transport sees is stdout.
 func (r *Runner) Capabilities(runtimeName string) transport.Caps {
-	caps := transport.Caps{ToolRestriction: transport.RestrictNone}
+	// Everything the exec transport can do is knowable from config alone, so
+	// these are always established.
+	caps := transport.Caps{Probed: true, ToolRestriction: transport.RestrictNone}
 	rt, ok := r.cfg.Runtimes[runtimeName]
 	if !ok {
 		return caps

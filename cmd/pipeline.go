@@ -17,9 +17,11 @@ import (
 	"github.com/yosephbernandus/baton/internal/gateway"
 	gitpkg "github.com/yosephbernandus/baton/internal/git"
 	"github.com/yosephbernandus/baton/internal/phase"
+	"github.com/yosephbernandus/baton/internal/role"
 	"github.com/yosephbernandus/baton/internal/session"
 	"github.com/yosephbernandus/baton/internal/spec"
 	"github.com/yosephbernandus/baton/internal/task"
+	"github.com/yosephbernandus/baton/internal/transport"
 )
 
 func NewPipelineCmd() *cobra.Command {
@@ -71,26 +73,22 @@ func newPipelineRunCmd() *cobra.Command {
 				return exitError(3, "invalid complexity %q, must be TRIVIAL|SMALL|MEDIUM|LARGE", complexity)
 			}
 
-			var runtimes []string
 			defaultRT, _ := cfg.ResolveRuntime("", "")
+			roleRuntimes := map[string]string{}
+			for _, roleName := range role.Names() {
+				rt := defaultRT
+				if rm, ok := cfg.RoleModels[roleName]; ok && rm.Runtime != "" {
+					rt = rm.Runtime
+				}
+				roleRuntimes[roleName] = rt
+			}
+
+			var runtimes []string
 			runtimes = append(runtimes, defaultRT)
 			for _, rm := range cfg.RoleModels {
 				if rm.Runtime != "" {
 					runtimes = append(runtimes, rm.Runtime)
 				}
-			}
-			report := gateway.Preflight(gateway.Input{
-				Config:     cfg,
-				Spec:       s,
-				Runtimes:   runtimes,
-				Complexity: complexity,
-				Mode:       "pipeline",
-			})
-			if msg := report.FormatStderr(); msg != "" {
-				fmt.Fprint(os.Stderr, msg)
-			}
-			if report.HasErrors() && cfg.Gateway.Strict {
-				return exitError(3, "gateway preflight failed")
 			}
 
 			store, err := task.NewStore(cfg.TaskDir)
@@ -104,6 +102,36 @@ func newPipelineRunCmd() *cobra.Command {
 			// another as a subprocess.
 			r := dispatch.New(cfg, emitter, store)
 			defer r.Exec().KillAll()
+
+			// Establish what each runtime can enforce before the run starts. A
+			// transport that must connect to find out does so here, so a role
+			// boundary it cannot honour is reported ahead of the first phase
+			// instead of silently doing nothing during it.
+			probeCtx, probeCancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+			caps, probeErrs := r.ProbeAll(probeCtx, runtimes)
+			probeCancel()
+			for _, perr := range probeErrs {
+				fmt.Fprintf(os.Stderr, "gateway: %v\n", perr)
+			}
+
+			report := gateway.Preflight(gateway.Input{
+				Config:       cfg,
+				Spec:         s,
+				Runtimes:     runtimes,
+				Complexity:   complexity,
+				Mode:         "pipeline",
+				RoleRuntimes: roleRuntimes,
+				Caps: func(name string) (transport.Caps, bool) {
+					c, ok := caps[name]
+					return c, ok
+				},
+			})
+			if msg := report.FormatStderr(); msg != "" {
+				fmt.Fprint(os.Stderr, msg)
+			}
+			if report.HasErrors() && cfg.Gateway.Strict {
+				return exitError(3, "gateway preflight failed")
+			}
 
 			specID := strings.TrimSuffix(filepath.Base(specPath), filepath.Ext(specPath))
 			sessionPath := session.SessionPath(specID)

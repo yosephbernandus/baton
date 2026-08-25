@@ -53,55 +53,45 @@ func (t *Transport) Capabilities(runtimeName string) transport.Caps {
 	return transport.Caps{ToolRestriction: transport.RestrictNone}
 }
 
+// Probe establishes what a runtime can do without running any work. The
+// handshake it performs — initialize then session/new — is what reveals the
+// agent's mechanisms, and neither call invokes a model, so a preflight check
+// can report an enforcement gap before a run rather than after.
+func (t *Transport) Probe(ctx context.Context, runtimeName string) (transport.Caps, error) {
+	if c, ok := t.caps[runtimeName]; ok && c.Probed {
+		return c, nil
+	}
+
+	proc, err := t.spawn(ctx, runtimeName)
+	if err != nil {
+		return transport.Caps{ToolRestriction: transport.RestrictNone}, err
+	}
+	defer proc.close()
+
+	// A probe asks no tool boundary and no model: it is only establishing what
+	// the agent offers, and requesting either would change session state.
+	caps, err := t.handshake(proc.ctx, proc.conn, proc.sess, transport.Request{RuntimeName: runtimeName})
+	if err != nil {
+		return transport.Caps{ToolRestriction: transport.RestrictNone}, err
+	}
+	t.caps[runtimeName] = caps
+	return caps, nil
+}
+
 // Execute runs one prompt turn.
 func (t *Transport) Execute(ctx context.Context, req transport.Request) (*transport.Result, error) {
-	rt, ok := t.cfg.Runtimes[req.RuntimeName]
-	if !ok {
-		return nil, fmt.Errorf("runtime %q not found", req.RuntimeName)
-	}
-
 	start := time.Now()
 
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	cmd := exec.CommandContext(runCtx, rt.Command, rt.Args...)
-	stdin, err := cmd.StdinPipe()
+	proc, err := t.spawn(ctx, req.RuntimeName)
 	if err != nil {
-		return nil, fmt.Errorf("acp stdin pipe: %w", err)
+		return nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("acp stdout pipe: %w", err)
-	}
-	// stdout is the protocol stream, so the agent's logs must not land there.
-	// Everything it writes to stderr is diagnostics.
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, fmt.Errorf("acp stderr pipe: %w", err)
-	}
+	defer proc.close()
+	proc.sess.setBoundary(req.AllowedTools)
 
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("starting %s: %w", rt.Command, err)
-	}
-	defer func() {
-		_ = stdin.Close()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		_ = cmd.Wait()
-	}()
+	sess, conn := proc.sess, proc.conn
 
-	go drainStderr(stderr, t.log)
-
-	sess := newSession(nil, req.AllowedTools, t.log)
-	conn := NewConn(stdout, stdin, sess, t.log)
-	sess.conn = conn
-
-	served := make(chan error, 1)
-	go func() { served <- conn.Serve(runCtx) }()
-
-	caps, err := t.handshake(runCtx, conn, sess, req, &rt)
+	caps, err := t.handshake(proc.ctx, conn, sess, req)
 	if err != nil {
 		return t.failure(sess, start, err)
 	}
@@ -110,10 +100,10 @@ func (t *Transport) Execute(ctx context.Context, req transport.Request) (*transp
 	// Apply liveness as a ceiling on the turn. ACP has no heartbeat of its
 	// own: the prompt call simply blocks until the agent is done, so the
 	// absolute timeout is the only bound that applies.
-	turnCtx := runCtx
+	turnCtx := proc.ctx
 	if d := req.Liveness.AbsoluteTimeout; d > 0 {
 		var stop context.CancelFunc
-		turnCtx, stop = context.WithTimeout(runCtx, d)
+		turnCtx, stop = context.WithTimeout(proc.ctx, d)
 		defer stop()
 	}
 
@@ -147,21 +137,86 @@ func (t *Transport) Execute(ctx context.Context, req transport.Request) (*transp
 		result.ErrorDetail = fmt.Sprintf("agent stopped: %s", resp.StopReason)
 	}
 	result.FilesChanged = filesTouched(events)
-
-	select {
-	case <-served:
-	default:
-	}
 	return result, nil
+}
+
+// process is one spawned agent and the connection to it.
+type process struct {
+	ctx    context.Context
+	conn   *Conn
+	sess   *session
+	cancel context.CancelFunc
+	kill   func()
+}
+
+func (p *process) close() {
+	p.cancel()
+	p.kill()
+}
+
+// spawn starts the agent and serves its connection. Both Execute and Probe use
+// it, so a probe and a real turn reach the agent exactly the same way.
+func (t *Transport) spawn(ctx context.Context, runtimeName string) (*process, error) {
+	rt, ok := t.cfg.Runtimes[runtimeName]
+	if !ok {
+		return nil, fmt.Errorf("runtime %q not found", runtimeName)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+
+	cmd := exec.CommandContext(runCtx, rt.Command, rt.Args...)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("acp stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("acp stdout pipe: %w", err)
+	}
+	// stdout is the protocol stream, so the agent's logs must not land there.
+	// Everything it writes to stderr is diagnostics.
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("acp stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("starting %s: %w", rt.Command, err)
+	}
+
+	go drainStderr(stderr, t.log)
+
+	sess := newSession(nil, nil, t.log)
+	conn := NewConn(stdout, stdin, sess, t.log)
+	sess.conn = conn
+	go func() { _ = conn.Serve(runCtx) }()
+
+	return &process{
+		ctx:    runCtx,
+		conn:   conn,
+		sess:   sess,
+		cancel: cancel,
+		kill: func() {
+			_ = stdin.Close()
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+			_ = cmd.Wait()
+		},
+	}, nil
 }
 
 // handshake performs initialize and session/new, then negotiates model and tool
 // boundary against whatever mechanism the agent turned out to expose.
 func (t *Transport) handshake(
 	ctx context.Context, conn *Conn, sess *session,
-	req transport.Request, rt *config.RuntimeConfig,
+	req transport.Request,
 ) (transport.Caps, error) {
-	caps := transport.Caps{ToolRestriction: transport.RestrictNone}
+	caps := transport.Caps{Probed: true, ToolRestriction: transport.RestrictNone}
 
 	var initResp initializeResponse
 	err := conn.Call(ctx, methodInitialize, initializeRequest{
