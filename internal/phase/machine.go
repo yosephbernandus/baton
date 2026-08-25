@@ -21,12 +21,12 @@ import (
 	"github.com/yosephbernandus/baton/internal/skill"
 	"github.com/yosephbernandus/baton/internal/spec"
 	"github.com/yosephbernandus/baton/internal/task"
+	"github.com/yosephbernandus/baton/internal/transport"
 )
 
-type PhaseRunner interface {
-	Run(ctx context.Context, taskID, runtimeName, model, prompt string,
-		s *spec.Spec, liveness runner.LivenessConfig, extraArgs ...string) (*runner.Result, error)
-}
+// PhaseRunner is the pipeline's view of a transport. It is an alias rather than
+// a separate interface so there is exactly one contract to satisfy.
+type PhaseRunner = transport.Transport
 
 type PipelineConfig struct {
 	Complexity string
@@ -523,12 +523,9 @@ func (p *Pipeline) executePhaseWithRetries(
 	loopDetector := p.newLoopDetector()
 	boBase, boMax, boJitter := p.resolveBackoff()
 
-	var toolRestrictionFlags []string
-	if rt, ok := p.cfg.Runtimes[runtimeName]; ok {
-		if tools := role.AllowedTools(ph.Role); len(tools) > 0 {
-			toolRestrictionFlags = runner.BuildToolRestrictionFlags(&rt, tools)
-		}
-	}
+	// State the role's tool boundary as intent. How it gets enforced — argv
+	// flags, a session mode, or not at all — belongs to the transport.
+	allowedTools := role.AllowedTools(ph.Role)
 
 	var lastFailReason string
 	var lastCrashed bool
@@ -574,7 +571,15 @@ func (p *Pipeline) executePhaseWithRetries(
 			p.emitPhaseRetryEvent(taskID, runtimeName, model, ph, attempt)
 		}
 
-		runResult, err := p.runner.Run(ctx, taskID, runtimeName, model, phasePrompt, p.spec, liveness, toolRestrictionFlags...)
+		runResult, err := p.runner.Execute(ctx, transport.Request{
+			TaskID:       taskID,
+			RuntimeName:  runtimeName,
+			Model:        model,
+			Prompt:       phasePrompt,
+			Spec:         p.spec,
+			Liveness:     liveness,
+			AllowedTools: allowedTools,
+		})
 		if err != nil {
 			var notes []string
 			var output []string
@@ -621,7 +626,15 @@ func (p *Pipeline) executePhaseWithRetries(
 					return outcomeCancelled, "pipeline cancelled"
 				case <-time.After(wait):
 				}
-				rlResult, rlErr := p.runner.Run(ctx, taskID, runtimeName, model, phasePrompt, p.spec, liveness, toolRestrictionFlags...)
+				rlResult, rlErr := p.runner.Execute(ctx, transport.Request{
+					TaskID:       taskID,
+					RuntimeName:  runtimeName,
+					Model:        model,
+					Prompt:       phasePrompt,
+					Spec:         p.spec,
+					Liveness:     liveness,
+					AllowedTools: allowedTools,
+				})
 				if rlErr != nil || rlResult.Status == "rate_limited" {
 					continue
 				}
@@ -779,7 +792,15 @@ func (p *Pipeline) executePhaseWithRetries(
 			liveness := p.buildLiveness()
 
 			p.emitPhaseRetryEvent(taskID, runtimeName, model, ph, totalAttempts+1)
-			runResult, err := p.runner.Run(ctx, taskID, runtimeName, model, phasePrompt, p.spec, liveness, toolRestrictionFlags...)
+			runResult, err := p.runner.Execute(ctx, transport.Request{
+				TaskID:       taskID,
+				RuntimeName:  runtimeName,
+				Model:        model,
+				Prompt:       phasePrompt,
+				Spec:         p.spec,
+				Liveness:     liveness,
+				AllowedTools: allowedTools,
+			})
 			if err == nil {
 				completion := extractCompletion(runResult.Events, ph.CompletionSignal)
 				if completion.Status == "done" || runResult.Status == "completed" {
@@ -1249,9 +1270,9 @@ func (p *Pipeline) emitCompactionEvent(ph Phase, tokensBefore int) {
 		fmt.Sprintf("%s-phase-%d", p.specID, ph.ID),
 		"", "", "baton-pipeline", "compaction_triggered",
 		map[string]interface{}{
-			"phase_id":        ph.ID,
-			"phase_name":      ph.Name,
-			"tokens_before":   tokensBefore,
+			"phase_id":          ph.ID,
+			"phase_name":        ph.Name,
+			"tokens_before":     tokensBefore,
 			"records_compacted": len(p.completedRecords),
 		})
 }

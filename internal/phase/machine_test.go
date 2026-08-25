@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,26 +14,30 @@ import (
 	"github.com/yosephbernandus/baton/internal/proto"
 	"github.com/yosephbernandus/baton/internal/runner"
 	"github.com/yosephbernandus/baton/internal/spec"
+	"github.com/yosephbernandus/baton/internal/transport"
 )
 
 type mockRunner struct {
-	results   []*runner.Result
-	errors    []error
-	calls     int
-	prompts   []string
-	extraArgs [][]string
-	runtimes  []string
-	models    []string
+	results      []*runner.Result
+	errors       []error
+	calls        int
+	prompts      []string
+	allowedTools [][]string
+	runtimes     []string
+	models       []string
 }
 
-func (m *mockRunner) Run(_ context.Context, _, runtimeName, model, prompt string,
-	_ *spec.Spec, _ runner.LivenessConfig, extraArgs ...string) (*runner.Result, error) {
+func (m *mockRunner) Capabilities(_ string) transport.Caps {
+	return transport.Caps{ToolRestriction: transport.RestrictPerTool}
+}
+
+func (m *mockRunner) Execute(_ context.Context, req transport.Request) (*runner.Result, error) {
 	i := m.calls
 	m.calls++
-	m.prompts = append(m.prompts, prompt)
-	m.extraArgs = append(m.extraArgs, extraArgs)
-	m.runtimes = append(m.runtimes, runtimeName)
-	m.models = append(m.models, model)
+	m.prompts = append(m.prompts, req.Prompt)
+	m.allowedTools = append(m.allowedTools, req.AllowedTools)
+	m.runtimes = append(m.runtimes, req.RuntimeName)
+	m.models = append(m.models, req.Model)
 	if i < len(m.results) {
 		res := m.results[i]
 		// Mirror the exec transport: stdout lines are parsed into events once,
@@ -829,7 +834,7 @@ func TestCountHeartbeatsNone(t *testing.T) {
 	}
 }
 
-func TestToolRestrictionFlagsPassedToRunner(t *testing.T) {
+func TestRoleToolBoundaryPassedAsIntent(t *testing.T) {
 	mr := &mockRunner{
 		results: []*runner.Result{
 			{Status: "completed", Output: []string{"BATON:C:setup:done"}},
@@ -863,20 +868,21 @@ func TestToolRestrictionFlagsPassedToRunner(t *testing.T) {
 	if mr.calls < 1 {
 		t.Fatal("expected at least 1 call")
 	}
-	// Phase 1 (setup) has role "lead" → AllowedTools returns ["Read","Grep","Glob","Bash"]
-	args := mr.extraArgs[0]
-	if len(args) != 2 {
-		t.Fatalf("expected 2 extra args (flag + value), got %d: %v", len(args), args)
+	// Phase 1 (setup) has role "lead" → AllowedTools returns ["Read","Grep","Glob","Bash"].
+	// The pipeline states the boundary; turning it into argv is the transport's job.
+	tools := mr.allowedTools[0]
+	if len(tools) != 4 {
+		t.Fatalf("expected 4 allowed tools, got %d: %v", len(tools), tools)
 	}
-	if args[0] != "--allowedTools" {
-		t.Errorf("flag=%q, want --allowedTools", args[0])
+	if !slices.Contains(tools, "Read") || !slices.Contains(tools, "Bash") {
+		t.Errorf("expected Read and Bash in %v", tools)
 	}
-	if !strings.Contains(args[1], "Read") || !strings.Contains(args[1], "Bash") {
-		t.Errorf("expected tools in %q", args[1])
+	if slices.Contains(tools, "--allowedTools") {
+		t.Error("pipeline must pass tool names, not CLI flags")
 	}
 }
 
-func TestToolRestrictionFlagsNilForDeveloper(t *testing.T) {
+func TestRoleToolBoundaryEmptyForDeveloper(t *testing.T) {
 	mr := &mockRunner{
 		results: []*runner.Result{
 			{Status: "completed", Output: []string{"BATON:C:setup:done"}},
@@ -909,14 +915,14 @@ func TestToolRestrictionFlagsNilForDeveloper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// TRIVIAL runs phases 1,8,16. Phase 8 (implementation) has role "developer"
-	// developer has no tool restrictions → extraArgs should be empty
+	// TRIVIAL runs phases 1,8,16. Phase 8 (implementation) has role "developer",
+	// which declares no tool restriction, so the request carries no boundary.
 	if mr.calls < 2 {
 		t.Fatal("expected at least 2 calls")
 	}
-	devArgs := mr.extraArgs[1] // phase 8, developer
-	if len(devArgs) != 0 {
-		t.Errorf("developer should have no tool restriction flags, got %v", devArgs)
+	devTools := mr.allowedTools[1] // phase 8, developer
+	if len(devTools) != 0 {
+		t.Errorf("developer should have no tool boundary, got %v", devTools)
 	}
 }
 

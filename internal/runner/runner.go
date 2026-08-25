@@ -18,6 +18,7 @@ import (
 	"github.com/yosephbernandus/baton/internal/socket"
 	"github.com/yosephbernandus/baton/internal/spec"
 	"github.com/yosephbernandus/baton/internal/task"
+	"github.com/yosephbernandus/baton/internal/transport"
 )
 
 // cancel reason constants for the watchdog goroutine
@@ -27,32 +28,14 @@ const (
 	cancelAbsoluteTimeout
 )
 
-// LivenessConfig controls how the runner detects and handles unresponsive workers.
-type LivenessConfig struct {
-	SilenceTimeout     time.Duration
-	AbsoluteTimeout    time.Duration
-	SilenceWarning     time.Duration
-	StartupTimeout     time.Duration
-	NetworkIdleTimeout time.Duration
-	AttemptTimeout     time.Duration
-	TickInterval       time.Duration // how often watchdog checks; 0 defaults to 30s
-}
+// Runner is the exec transport: it spawns the runtime as a subprocess and reads
+// BATON: markers off its stdout.
+//
+// LivenessConfig and Result are aliases so the vocabulary lives in one place
+// (internal/transport) without churning every existing reference.
+type LivenessConfig = transport.LivenessConfig
 
-type Result struct {
-	Status        string
-	ExitCode      int
-	Crashed       bool
-	Clarification string
-	Output        []string
-	// Events is the transport-neutral view of Output. The pipeline reads this
-	// and never re-parses raw lines; transports without stdout still fill it.
-	Events       []proto.Event
-	ChecksFailed []string
-	FilesChanged []string
-	Duration     time.Duration
-	SocketPath   string
-	ErrorDetail  string
-}
+type Result = transport.Result
 
 type Runner struct {
 	cfg     *config.Config
@@ -74,10 +57,40 @@ func (r *Runner) KillAll() {
 	}
 }
 
-func (r *Runner) Run(ctx context.Context, taskID, runtimeName, model, prompt string, s *spec.Spec, liveness LivenessConfig, extraArgs ...string) (*Result, error) {
+// Capabilities reports what the exec transport can do for a runtime. Tool
+// restriction is per-tool only when the runtime config declares a flag for it;
+// everything a structured protocol would provide (permission gating, token
+// usage, touched-file reporting, a session spanning phases) is absent by
+// construction, because all this transport sees is stdout.
+func (r *Runner) Capabilities(runtimeName string) transport.Caps {
+	caps := transport.Caps{ToolRestriction: transport.RestrictNone}
+	rt, ok := r.cfg.Runtimes[runtimeName]
+	if !ok {
+		return caps
+	}
+	if rt.ToolRestriction != nil && rt.ToolRestriction.Flag != "" {
+		caps.ToolRestriction = transport.RestrictPerTool
+	}
+	caps.ModelSelect = rt.ModelFlag != ""
+	return caps
+}
+
+// Execute runs one request as a subprocess and reads BATON: markers off stdout.
+func (r *Runner) Execute(ctx context.Context, req transport.Request) (*Result, error) {
+	taskID, runtimeName, model, prompt := req.TaskID, req.RuntimeName, req.Model, req.Prompt
+	s := req.Spec
+	liveness := req.Liveness
+
 	rt, ok := r.cfg.Runtimes[runtimeName]
 	if !ok {
 		return nil, fmt.Errorf("runtime %q not found", runtimeName)
+	}
+
+	// The pipeline states which tools the role permits; translating that into
+	// argv is this transport's business, not the pipeline's.
+	extraArgs := req.ExtraArgs
+	if len(req.AllowedTools) > 0 {
+		extraArgs = append(extraArgs, BuildToolRestrictionFlags(&rt, req.AllowedTools)...)
 	}
 
 	// Create an internal cancellable context; the caller's ctx is still

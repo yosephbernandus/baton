@@ -15,6 +15,7 @@ import (
 	"github.com/yosephbernandus/baton/internal/runner"
 	"github.com/yosephbernandus/baton/internal/spec"
 	"github.com/yosephbernandus/baton/internal/task"
+	"github.com/yosephbernandus/baton/internal/transport"
 )
 
 var respondableStatuses = map[string]bool{
@@ -177,7 +178,14 @@ func NewRespondCmd() *cobra.Command {
 			}
 
 			r := runner.New(cfg, emitter, store)
-			result, err := r.Run(ctx, taskID, t.Runtime, t.Model, prompt, t.Spec, liveness)
+			result, err := r.Execute(ctx, transport.Request{
+				TaskID:      taskID,
+				RuntimeName: t.Runtime,
+				Model:       t.Model,
+				Prompt:      prompt,
+				Spec:        t.Spec,
+				Liveness:    liveness,
+			})
 			if err != nil {
 				t.Status = "failed"
 				t.Error = err.Error()
