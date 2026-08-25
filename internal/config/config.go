@@ -10,34 +10,34 @@ import (
 )
 
 type Config struct {
-	Orchestrator    OrchestratorConfig         `yaml:"orchestrator"`
-	Runtimes        map[string]RuntimeConfig   `yaml:"runtimes"`
-	Defaults        DefaultsConfig             `yaml:"defaults"`
-	Routing         RoutingConfig              `yaml:"routing"`
-	ClarifyPatterns []string                   `yaml:"clarification_patterns"`
-	ClarifyExit     int                        `yaml:"clarification_exit_code"`
-	EventLog        string                     `yaml:"event_log"`
-	TaskDir         string                     `yaml:"task_dir"`
-	ResultDir       string                     `yaml:"result_dir"`
-	SpecDir         string                     `yaml:"spec_dir"`
-	LockFile        string                     `yaml:"lock_file"`
-	ProjectBrief    string                     `yaml:"project_brief"`
+	Orchestrator       OrchestratorConfig         `yaml:"orchestrator"`
+	Runtimes           map[string]RuntimeConfig   `yaml:"runtimes"`
+	Defaults           DefaultsConfig             `yaml:"defaults"`
+	Routing            RoutingConfig              `yaml:"routing"`
+	ClarifyPatterns    []string                   `yaml:"clarification_patterns"`
+	ClarifyExit        int                        `yaml:"clarification_exit_code"`
+	EventLog           string                     `yaml:"event_log"`
+	TaskDir            string                     `yaml:"task_dir"`
+	ResultDir          string                     `yaml:"result_dir"`
+	SpecDir            string                     `yaml:"spec_dir"`
+	LockFile           string                     `yaml:"lock_file"`
+	ProjectBrief       string                     `yaml:"project_brief"`
 	AbsoluteTimeout    string                     `yaml:"default_timeout"` // yaml tag kept as default_timeout for backward compat
 	SilenceTimeout     string                     `yaml:"silence_timeout"`
 	SilenceWarning     string                     `yaml:"silence_warning"`
 	StartupTimeout     string                     `yaml:"startup_timeout"`
 	NetworkIdleTimeout string                     `yaml:"network_idle_timeout"`
 	AttemptTimeout     string                     `yaml:"attempt_timeout"`
-	OutputTailLines int                        `yaml:"output_tail_lines"`
-	PhaseMachine    PhaseMachineConfig         `yaml:"phase_machine"`
-	RoleModels      map[string]RoleModelConfig `yaml:"role_models"`
-	Skills          SkillsConfig               `yaml:"skills"`
-	Advisor         AdvisorConfig              `yaml:"escalation_advisor"`
-	Feedback        FeedbackConfig             `yaml:"feedback"`
-	Annealing       AnnealingConfig            `yaml:"annealing"`
-	WorkerProtocol  WorkerProtocolConfig       `yaml:"worker_protocol"`
-	Dispatch        DispatchConfig             `yaml:"dispatch"`
-	Gateway         GatewayConfig              `yaml:"gateway"`
+	OutputTailLines    int                        `yaml:"output_tail_lines"`
+	PhaseMachine       PhaseMachineConfig         `yaml:"phase_machine"`
+	RoleModels         map[string]RoleModelConfig `yaml:"role_models"`
+	Skills             SkillsConfig               `yaml:"skills"`
+	Advisor            AdvisorConfig              `yaml:"escalation_advisor"`
+	Feedback           FeedbackConfig             `yaml:"feedback"`
+	Annealing          AnnealingConfig            `yaml:"annealing"`
+	WorkerProtocol     WorkerProtocolConfig       `yaml:"worker_protocol"`
+	Dispatch           DispatchConfig             `yaml:"dispatch"`
+	Gateway            GatewayConfig              `yaml:"gateway"`
 }
 
 type GatewayConfig struct {
@@ -45,9 +45,9 @@ type GatewayConfig struct {
 }
 
 type DispatchConfig struct {
-	DefaultMode        string `yaml:"default_mode"`
-	PipelineThreshold  string `yaml:"pipeline_threshold"`
-	CoordinatorOutput  string `yaml:"coordinator_output"`
+	DefaultMode       string `yaml:"default_mode"`
+	PipelineThreshold string `yaml:"pipeline_threshold"`
+	CoordinatorOutput string `yaml:"coordinator_output"`
 }
 
 type AdvisorConfig struct {
@@ -70,8 +70,20 @@ type OrchestratorConfig struct {
 	InstructionsFile string `yaml:"instructions_file"`
 }
 
+// Transport protocols a runtime can speak.
+const (
+	ProtocolExec = "exec"
+	ProtocolACP  = "acp"
+)
+
 type RuntimeConfig struct {
-	Command         string           `yaml:"command"`
+	Command string `yaml:"command"`
+	// Protocol selects the transport. "" or "exec" spawns the command and reads
+	// BATON: markers off its stdout; "acp" speaks Agent Client Protocol over
+	// its stdio, in which case the flag fields below do not apply.
+	Protocol string `yaml:"protocol,omitempty"`
+	// Args are passed verbatim when Protocol is "acp" (for example ["acp"]).
+	Args            []string         `yaml:"args,omitempty"`
 	ModelFlag       string           `yaml:"model_flag"`
 	PromptFlag      string           `yaml:"prompt_flag"`
 	ContextFlag     string           `yaml:"context_flag"`
@@ -79,7 +91,7 @@ type RuntimeConfig struct {
 	Positional      []string         `yaml:"positional"`
 	Models          []string         `yaml:"models"`
 	ToolRestriction *ToolRestriction `yaml:"tool_restriction,omitempty"`
-	PromptMode      string           `yaml:"prompt_mode,omitempty"`    // "stdin" to pipe prompt via stdin instead of CLI arg
+	PromptMode      string           `yaml:"prompt_mode,omitempty"` // "stdin" to pipe prompt via stdin instead of CLI arg
 	RateLimit       *RateLimitConfig `yaml:"rate_limit,omitempty"`
 	OutputFormat    string           `yaml:"output_format,omitempty"` // "stream-json" for NDJSON parsing
 }
@@ -100,27 +112,27 @@ type DefaultsConfig struct {
 }
 
 type PhaseMachineConfig struct {
-	Enabled              bool    `yaml:"enabled"`
-	ComplexityDefault    string  `yaml:"complexity_default"`
-	MaxL1Retries         int     `yaml:"max_l1_retries"`
-	MaxL2Cycles          int     `yaml:"max_l2_cycles"`
-	HeartbeatBudget      int     `yaml:"heartbeat_budget"`
-	LoopDetectionEnabled *bool   `yaml:"loop_detection_enabled,omitempty"`
-	LoopWindowSize       int     `yaml:"loop_window_size"`
-	LoopThreshold        float64 `yaml:"loop_similarity_threshold"`
-	LoopTailLines        int     `yaml:"loop_tail_lines"`
-	BackoffBaseMs        int     `yaml:"backoff_base_ms"`
-	BackoffMaxMs         int     `yaml:"backoff_max_ms"`
-	BackoffJitter        bool    `yaml:"backoff_jitter"`
-	RateLimitRetries     int     `yaml:"rate_limit_retries"`
-	RateLimitBaseWaitMs  int     `yaml:"rate_limit_base_wait_ms"`
-	RateLimitMaxWaitMs   int     `yaml:"rate_limit_max_wait_ms"`
-	L2CooldownMs         int     `yaml:"l2_cooldown_ms"`
-	CompactionEnabled       *bool   `yaml:"compaction_enabled,omitempty"`
-	CompactionGateThreshold float64 `yaml:"compaction_gate_threshold"`
-	CompactionGatePhases    []int   `yaml:"compaction_gate_phases"`
-	ContextBudgetTokens     int     `yaml:"context_budget_tokens"`
-	DirtyBitSkipEnabled     *bool   `yaml:"dirty_bit_skip_enabled,omitempty"`
+	Enabled                 bool           `yaml:"enabled"`
+	ComplexityDefault       string         `yaml:"complexity_default"`
+	MaxL1Retries            int            `yaml:"max_l1_retries"`
+	MaxL2Cycles             int            `yaml:"max_l2_cycles"`
+	HeartbeatBudget         int            `yaml:"heartbeat_budget"`
+	LoopDetectionEnabled    *bool          `yaml:"loop_detection_enabled,omitempty"`
+	LoopWindowSize          int            `yaml:"loop_window_size"`
+	LoopThreshold           float64        `yaml:"loop_similarity_threshold"`
+	LoopTailLines           int            `yaml:"loop_tail_lines"`
+	BackoffBaseMs           int            `yaml:"backoff_base_ms"`
+	BackoffMaxMs            int            `yaml:"backoff_max_ms"`
+	BackoffJitter           bool           `yaml:"backoff_jitter"`
+	RateLimitRetries        int            `yaml:"rate_limit_retries"`
+	RateLimitBaseWaitMs     int            `yaml:"rate_limit_base_wait_ms"`
+	RateLimitMaxWaitMs      int            `yaml:"rate_limit_max_wait_ms"`
+	L2CooldownMs            int            `yaml:"l2_cooldown_ms"`
+	CompactionEnabled       *bool          `yaml:"compaction_enabled,omitempty"`
+	CompactionGateThreshold float64        `yaml:"compaction_gate_threshold"`
+	CompactionGatePhases    []int          `yaml:"compaction_gate_phases"`
+	ContextBudgetTokens     int            `yaml:"context_budget_tokens"`
+	DirtyBitSkipEnabled     *bool          `yaml:"dirty_bit_skip_enabled,omitempty"`
 	MaxL3Cycles             int            `yaml:"max_l3_cycles"`
 	L3CooldownMs            int            `yaml:"l3_cooldown_ms"`
 	L3EscalationRuntime     string         `yaml:"l3_escalation_runtime"`

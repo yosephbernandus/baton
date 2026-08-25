@@ -12,11 +12,11 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/yosephbernandus/baton/internal/config"
+	"github.com/yosephbernandus/baton/internal/dispatch"
 	"github.com/yosephbernandus/baton/internal/events"
 	"github.com/yosephbernandus/baton/internal/gateway"
 	gitpkg "github.com/yosephbernandus/baton/internal/git"
 	"github.com/yosephbernandus/baton/internal/phase"
-	"github.com/yosephbernandus/baton/internal/runner"
 	"github.com/yosephbernandus/baton/internal/session"
 	"github.com/yosephbernandus/baton/internal/spec"
 	"github.com/yosephbernandus/baton/internal/task"
@@ -100,8 +100,10 @@ func newPipelineRunCmd() *cobra.Command {
 
 			emitter, _ := events.NewEmitter(cfg.EventLog)
 
-			r := runner.New(cfg, emitter, store)
-			defer r.KillAll()
+			// Route per runtime: a run can drive one role over ACP and
+			// another as a subprocess.
+			r := dispatch.New(cfg, emitter, store)
+			defer r.Exec().KillAll()
 
 			specID := strings.TrimSuffix(filepath.Base(specPath), filepath.Ext(specPath))
 			sessionPath := session.SessionPath(specID)

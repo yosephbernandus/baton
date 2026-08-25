@@ -1,0 +1,21 @@
+upstream:  https://github.com/zed-industries/agent-client-protocol
+path:      schema/v1/schema.json
+ref:       main
+fetched:   2026-08-25
+sha256:    caf62ff962ada396878372ced11efb2c6764e59d90919a38583c319948931a42
+protocol:  1
+
+This file is vendored data, not a dependency. Nothing here is compiled or
+executed; it is the reference the hand-written types in ../../types.go are
+derived from, kept in-tree so the wire contract we implement is auditable
+without a network fetch.
+
+CI compares the checksum above against upstream and reports a mismatch. It never
+applies one. A schema change upstream is a decision to make deliberately: read
+the diff, decide whether protocol version 1 semantics actually moved, update the
+types and this file together.
+
+To check by hand:
+
+    curl -sL https://raw.githubusercontent.com/zed-industries/agent-client-protocol/main/schema/v1/schema.json \
+      | shasum -a 256

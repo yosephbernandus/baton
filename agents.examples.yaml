@@ -47,6 +47,29 @@ runtimes:
     #     - "quota exceeded"
     #   exit_codes: []
 
+  # ACP transport: baton speaks Agent Client Protocol over the agent's stdio
+  # instead of building a command line and scraping stdout.
+  #
+  # None of the flag fields apply here. Model selection, tool boundaries and
+  # progress all travel over the protocol, and what the agent supports is
+  # discovered at handshake rather than declared:
+  #   - model    → session/set_config_option or session/set_model
+  #   - role     → a read-only session mode, plus session/request_permission
+  #   - progress → session/update
+  #
+  # OpenCode implements ACP natively. Most other agents need a separate adapter
+  # binary, which is a dependency on your machine, not baton's — install it
+  # deliberately.
+  opencode-acp:
+    command: "opencode"
+    protocol: "acp"
+    args:
+      - "acp"
+    models:
+      - kimi
+      - deepseek
+      - gemini-flash
+
   pi-agent:
     command: "pi-agent"
     model_flag: "--model"
