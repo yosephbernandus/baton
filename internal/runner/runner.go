@@ -403,6 +403,21 @@ func (r *Runner) Execute(ctx context.Context, req transport.Request) (*Result, e
 		errorDetail = extractErrorDetail(output)
 	}
 
+	// Detect changes before deciding the outcome. A worker that edited files and
+	// then failed still edited files: role boundary verification reads this
+	// list, and dirty-bit tracking treats an empty one as "nothing happened
+	// upstream" and skips the verification phases that would have caught it.
+	var filesChanged []string
+	afterSnap, _ := gitpkg.TakeSnapshot()
+	if beforeSnap != nil && afterSnap != nil {
+		filesChanged = gitpkg.DetectChanges(beforeSnap, afterSnap)
+		for _, f := range filesChanged {
+			_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "file_changed", map[string]interface{}{
+				"path": f,
+			})
+		}
+	}
+
 	if status == "completed" && s != nil && len(s.AcceptanceChecks) > 0 {
 		failed := r.runAcceptanceChecks(taskID, runtimeName, model, s.AcceptanceChecks)
 		if len(failed) > 0 {
@@ -413,19 +428,9 @@ func (r *Runner) Execute(ctx context.Context, req transport.Request) (*Result, e
 				Output:       output,
 				Events:       events,
 				ChecksFailed: failed,
+				FilesChanged: filesChanged,
 				Duration:     duration,
 			}, nil
-		}
-	}
-
-	var filesChanged []string
-	afterSnap, _ := gitpkg.TakeSnapshot()
-	if beforeSnap != nil && afterSnap != nil {
-		filesChanged = gitpkg.DetectChanges(beforeSnap, afterSnap)
-		for _, f := range filesChanged {
-			_ = r.emitter.TaskEvent(taskID, runtimeName, model, "", "file_changed", map[string]interface{}{
-				"path": f,
-			})
 		}
 	}
 

@@ -1,12 +1,17 @@
 package acp
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
+	"github.com/yosephbernandus/baton/internal/config"
 	"github.com/yosephbernandus/baton/internal/proto"
+	"github.com/yosephbernandus/baton/internal/transport"
 )
 
 func toolEvent(paths ...string) proto.Event {
@@ -139,4 +144,125 @@ func TestDeletedFilesAreStillReported(t *testing.T) {
 	if !slices.Contains(got, "this-file-was-deleted.go") {
 		t.Errorf("files=%v, want a path that no longer exists to be kept", got)
 	}
+}
+
+// A turn that edits files and then fails still edited files. Reporting nothing
+// hides the edit from role boundary verification, and tells dirty-bit tracking
+// that nothing happened upstream — which skips the verification phases that
+// would have caught it.
+//
+// The agent is a shell script speaking just enough ACP to reach the prompt and
+// then die, so the failure path runs for real rather than being simulated.
+func TestFailedTurnStillReportsChangedFiles(t *testing.T) {
+	dir := acpGitRepo(t)
+
+	agent := filepath.Join(dir, "fake-agent.sh")
+	script := `#!/usr/bin/env bash
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentInfo":{"name":"fake","version":"0"}}}\n' "$id" ;;
+    *'"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s1"}}\n' "$id" ;;
+    *'"session/prompt"'*)
+      # Edit a file, then die without answering: a turn that fails mid-work.
+      echo CHANGED >> target.txt
+      exit 1 ;;
+  esac
+done
+`
+	if err := os.WriteFile(agent, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{Runtimes: map[string]config.RuntimeConfig{
+		"fake": {Command: agent, Protocol: config.ProtocolACP},
+	}}
+	tr := New(cfg, func(string, ...any) {})
+
+	res, err := tr.Execute(context.Background(), transport.Request{
+		TaskID: "t1", RuntimeName: "fake", Prompt: "edit it",
+		Liveness: transport.LivenessConfig{AbsoluteTimeout: 30 * time.Second},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.Status != "failed" {
+		t.Fatalf("status=%q, want failed", res.Status)
+	}
+	if !slices.Contains(res.FilesChanged, "target.txt") {
+		t.Errorf("FilesChanged=%v, want target.txt — the agent edited it before dying",
+			res.FilesChanged)
+	}
+}
+
+// A handshake that never succeeds means no work ran, so there is nothing to
+// attribute. It must still not error out on the missing snapshot.
+func TestFailedHandshakeReportsNoFiles(t *testing.T) {
+	dir := acpGitRepo(t)
+
+	agent := filepath.Join(dir, "broken-agent.sh")
+	if err := os.WriteFile(agent, []byte("#!/usr/bin/env bash\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{Runtimes: map[string]config.RuntimeConfig{
+		"fake": {Command: agent, Protocol: config.ProtocolACP},
+	}}
+	tr := New(cfg, func(string, ...any) {})
+
+	res, err := tr.Execute(context.Background(), transport.Request{
+		TaskID: "t1", RuntimeName: "fake", Prompt: "x",
+		Liveness: transport.LivenessConfig{AbsoluteTimeout: 30 * time.Second},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.Status != "failed" {
+		t.Errorf("status=%q, want failed", res.Status)
+	}
+	if len(res.FilesChanged) != 0 {
+		t.Errorf("FilesChanged=%v, want none: no work ran", res.FilesChanged)
+	}
+	if res.ErrorDetail == "" {
+		t.Error("expected the handshake failure to be described")
+	}
+}
+
+// acpGitRepo builds a throwaway repo with one committed file and makes it the
+// process working directory, since the transport snapshots cwd.
+func acpGitRepo(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "test")
+	if err := os.WriteFile(filepath.Join(dir, "target.txt"), []byte("original\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "target.txt")
+	run("commit", "-qm", "seed")
+
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	return dir
 }
