@@ -12,6 +12,7 @@ import (
 	"github.com/yosephbernandus/baton/internal/advisor"
 	"github.com/yosephbernandus/baton/internal/brief"
 	"github.com/yosephbernandus/baton/internal/config"
+	"github.com/yosephbernandus/baton/internal/cost"
 	"github.com/yosephbernandus/baton/internal/events"
 	"github.com/yosephbernandus/baton/internal/knowledge"
 	"github.com/yosephbernandus/baton/internal/proto"
@@ -60,6 +61,7 @@ type Pipeline struct {
 	manifestPath     string
 	advisor          *advisor.Advisor
 	compactionGate   *CompactionGate
+	costTracker      *cost.Tracker
 	l3ModelOverride  bool
 	resumeFromPhase  int
 	resumeBriefing   string
@@ -70,15 +72,20 @@ type Pipeline struct {
 
 func NewPipeline(cfg *config.Config, r PhaseRunner, store *task.Store,
 	emitter *events.Emitter, s *spec.Spec, specID string, pcfg PipelineConfig) *Pipeline {
+	// A tracker that cannot be created is not worth failing a run over; cost
+	// recording is observability, not correctness.
+	tracker, _ := cost.NewTracker(cfg.ResultDir)
+
 	return &Pipeline{
-		config:  pcfg,
-		phases:  DefaultPhases(),
-		runner:  r,
-		cfg:     cfg,
-		spec:    s,
-		store:   store,
-		emitter: emitter,
-		specID:  specID,
+		config:      pcfg,
+		phases:      DefaultPhases(),
+		runner:      r,
+		cfg:         cfg,
+		spec:        s,
+		store:       store,
+		emitter:     emitter,
+		specID:      specID,
+		costTracker: tracker,
 	}
 }
 
@@ -580,6 +587,7 @@ func (p *Pipeline) executePhaseWithRetries(
 			Liveness:     liveness,
 			AllowedTools: allowedTools,
 		})
+		p.recordCost(taskID, runtimeName, model, runResult)
 		if err != nil {
 			var notes []string
 			var output []string
@@ -635,6 +643,7 @@ func (p *Pipeline) executePhaseWithRetries(
 					Liveness:     liveness,
 					AllowedTools: allowedTools,
 				})
+				p.recordCost(taskID, runtimeName, model, rlResult)
 				if rlErr != nil || rlResult.Status == "rate_limited" {
 					continue
 				}
@@ -801,6 +810,7 @@ func (p *Pipeline) executePhaseWithRetries(
 				Liveness:     liveness,
 				AllowedTools: allowedTools,
 			})
+			p.recordCost(taskID, runtimeName, model, runResult)
 			if err == nil {
 				completion := extractCompletion(runResult.Events, ph.CompletionSignal)
 				if completion.Status == "done" || runResult.Status == "completed" {
@@ -829,6 +839,35 @@ func (p *Pipeline) executePhaseWithRetries(
 	}
 	p.finalizePhaseTask(taskID, "failed")
 	return outcomeFailed, lastFailReason
+}
+
+// recordCost logs what a phase attempt cost. The pipeline recorded nothing
+// before — only single-task runs did, so a sixteen-phase run reported zero
+// spend.
+//
+// Transports that report token counts are priced from them; the rest fall back
+// to elapsed time, and the entry records which it was.
+func (p *Pipeline) recordCost(taskID, runtimeName, model string, res *transport.Result) {
+	if res == nil || p.costTracker == nil {
+		return
+	}
+	var usage *cost.Usage
+	if res.Usage != nil {
+		usage = &cost.Usage{
+			InputTokens:      res.Usage.InputTokens,
+			OutputTokens:     res.Usage.OutputTokens,
+			CachedReadTokens: res.Usage.CachedReadTokens,
+			TotalTokens:      res.Usage.TotalTokens,
+		}
+	}
+	_ = p.costTracker.Record(cost.Entry{
+		TaskID:   taskID,
+		Runtime:  runtimeName,
+		Model:    model,
+		Duration: res.Duration,
+		Status:   res.Status,
+		Usage:    usage,
+	})
 }
 
 func (p *Pipeline) finalizePhaseTask(taskID, status string) {

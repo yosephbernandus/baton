@@ -295,6 +295,7 @@ func NewRunCmd() *cobra.Command {
 					Model:    model,
 					Duration: result.Duration,
 					Status:   result.Status,
+					Usage:    costUsage(result.Usage),
 				})
 			}
 

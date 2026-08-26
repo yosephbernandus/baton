@@ -227,3 +227,19 @@ phase_machine:
 # Gateway pre-execution validation
 gateway:
   strict: false   # true = block on preflight errors; false = warn only
+
+# Token prices, per million tokens. Only the models named here are overridden;
+# the rest keep built-in defaults.
+#
+# Cost is priced from reported tokens where a runtime reports them, and inferred
+# from elapsed time where it does not. `baton cost` says how much of a total is
+# which — an inferred figure is a proxy, not a price.
+#
+# cost_rates:
+#   sonnet:
+#     input_per_million: 3.0
+#     output_per_million: 15.0
+#     cached_per_million: 0.30   # omit to bill cached reads at the input rate
+#   my-local-model:
+#     input_per_million: 0.0
+#     output_per_million: 0.0

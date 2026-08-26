@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+// Source says where an entry's figure came from. A summary that mixes measured
+// and inferred numbers without distinguishing them reads as precision it does
+// not have, so every entry records which it is.
+const (
+	// SourceMeasured means the runtime reported token counts for the turn.
+	SourceMeasured = "measured"
+	// SourceElapsed means nothing reported tokens, so the figure was inferred
+	// from how long the worker ran. It is a proxy, not a price.
+	SourceElapsed = "elapsed"
+)
+
 type Entry struct {
 	TaskID    string        `json:"task_id"`
 	Runtime   string        `json:"runtime"`
@@ -16,6 +27,19 @@ type Entry struct {
 	Status    string        `json:"status"`
 	Estimate  float64       `json:"estimate_usd"`
 	Timestamp time.Time     `json:"ts"`
+
+	// Usage is what the runtime reported, when it reported anything.
+	Usage *Usage `json:"usage,omitempty"`
+	// Source is SourceMeasured or SourceElapsed.
+	Source string `json:"source,omitempty"`
+}
+
+// Usage is a turn's token accounting as the runtime reported it.
+type Usage struct {
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	CachedReadTokens int `json:"cached_read_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
 }
 
 type Summary struct {
@@ -24,6 +48,17 @@ type Summary struct {
 	ByModel       map[string]float64 `json:"by_model"`
 	ByRuntime     map[string]float64 `json:"by_runtime"`
 	ByStatus      map[string]int     `json:"by_status"`
+
+	// MeasuredTasks counts entries priced from reported tokens, and
+	// MeasuredEstimate is their share of the total. The gap between
+	// MeasuredEstimate and TotalEstimate is how much of the figure is inferred
+	// from elapsed time rather than counted.
+	MeasuredTasks    int     `json:"measured_tasks"`
+	MeasuredEstimate float64 `json:"measured_estimate_usd"`
+
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	CachedTokens int `json:"cached_read_tokens"`
 }
 
 var modelRates = map[string]float64{
@@ -40,6 +75,78 @@ var modelRates = map[string]float64{
 	"test":          0.000,
 }
 
+// TokenRate prices a model per million tokens. Rates are coarse defaults meant
+// to make relative cost between models visible, not to reproduce a bill; set
+// cost_rates in config to override any of them.
+type TokenRate struct {
+	InputPerM  float64 `yaml:"input_per_million" json:"input_per_million"`
+	OutputPerM float64 `yaml:"output_per_million" json:"output_per_million"`
+	// CachedPerM prices tokens served from a prompt cache. Zero means cached
+	// reads are billed at the input rate.
+	CachedPerM float64 `yaml:"cached_per_million" json:"cached_per_million"`
+}
+
+var tokenRates = map[string]TokenRate{
+	"opus":          {InputPerM: 15, OutputPerM: 75, CachedPerM: 1.5},
+	"sonnet":        {InputPerM: 3, OutputPerM: 15, CachedPerM: 0.3},
+	"claude-sonnet": {InputPerM: 3, OutputPerM: 15, CachedPerM: 0.3},
+	"haiku":         {InputPerM: 0.8, OutputPerM: 4, CachedPerM: 0.08},
+	"gpt-4o":        {InputPerM: 2.5, OutputPerM: 10},
+	"gemini":        {InputPerM: 1.25, OutputPerM: 5},
+	"gemini-flash":  {InputPerM: 0.075, OutputPerM: 0.3},
+	"kimi":          {InputPerM: 0.6, OutputPerM: 2.5},
+	"deepseek":      {InputPerM: 0.3, OutputPerM: 1.2},
+	"deepseek-r1":   {InputPerM: 0.55, OutputPerM: 2.2},
+	"grok":          {InputPerM: 2, OutputPerM: 10},
+	"test":          {},
+}
+
+// defaultTokenRate prices a model nothing knows about. Charging something keeps
+// an unknown model from looking free next to a priced one.
+var defaultTokenRate = TokenRate{InputPerM: 1, OutputPerM: 4}
+
+// SetTokenRates merges configured overrides over the built-in defaults.
+func SetTokenRates(overrides map[string]TokenRate) {
+	for model, rate := range overrides {
+		tokenRates[model] = rate
+	}
+}
+
+// RateFor returns the rate used for a model, and whether it was a known one.
+func RateFor(model string) (TokenRate, bool) {
+	rate, ok := tokenRates[model]
+	if !ok {
+		return defaultTokenRate, false
+	}
+	return rate, true
+}
+
+// EstimateFromTokens prices a turn from what the runtime counted.
+//
+// Cached reads are billed separately when a rate says so, and are subtracted
+// from the input count rather than charged twice — reported input totals
+// include them.
+func EstimateFromTokens(model string, u Usage) float64 {
+	rate, _ := RateFor(model)
+
+	input := u.InputTokens
+	var cachedCost float64
+	if u.CachedReadTokens > 0 && rate.CachedPerM > 0 {
+		cached := u.CachedReadTokens
+		if cached > input {
+			cached = input
+		}
+		input -= cached
+		cachedCost = float64(cached) / 1e6 * rate.CachedPerM
+	}
+
+	return float64(input)/1e6*rate.InputPerM +
+		float64(u.OutputTokens)/1e6*rate.OutputPerM +
+		cachedCost
+}
+
+// EstimateCost infers a figure from how long a worker ran. It is the fallback
+// for runtimes that report no tokens.
 func EstimateCost(model string, duration time.Duration) float64 {
 	rate, ok := modelRates[model]
 	if !ok {
@@ -67,8 +174,21 @@ func (t *Tracker) Record(entry Entry) error {
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now().UTC()
 	}
+	// Prefer what the runtime counted. Elapsed time is only a stand-in for
+	// runtimes that report nothing.
+	if entry.Source == "" {
+		if entry.Usage != nil && (entry.Usage.InputTokens > 0 || entry.Usage.OutputTokens > 0) {
+			entry.Source = SourceMeasured
+		} else {
+			entry.Source = SourceElapsed
+		}
+	}
 	if entry.Estimate == 0 {
-		entry.Estimate = EstimateCost(entry.Model, entry.Duration)
+		if entry.Source == SourceMeasured {
+			entry.Estimate = EstimateFromTokens(entry.Model, *entry.Usage)
+		} else {
+			entry.Estimate = EstimateCost(entry.Model, entry.Duration)
+		}
 	}
 
 	line, err := json.Marshal(entry)
@@ -105,6 +225,14 @@ func (t *Tracker) Summarize() (*Summary, error) {
 		s.ByModel[e.Model] += e.Estimate
 		s.ByRuntime[e.Runtime] += e.Estimate
 		s.ByStatus[e.Status]++
+
+		if e.Source == SourceMeasured && e.Usage != nil {
+			s.MeasuredTasks++
+			s.MeasuredEstimate += e.Estimate
+			s.InputTokens += e.Usage.InputTokens
+			s.OutputTokens += e.Usage.OutputTokens
+			s.CachedTokens += e.Usage.CachedReadTokens
+		}
 	}
 
 	return s, nil
