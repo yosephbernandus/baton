@@ -41,6 +41,12 @@ const (
 // reports the gap before execution rather than letting enforcement fail
 // silently at runtime.
 type Caps struct {
+	// Probed says whether these capabilities were actually established. A
+	// transport that must talk to the agent before it knows anything reports
+	// the floor until then, and the floor is indistinguishable from a genuine
+	// "cannot" unless this says which one it is.
+	Probed bool
+
 	ToolRestriction ToolRestrictionKind
 	ModelSelect     bool
 	Permission      bool
@@ -102,6 +108,13 @@ type Result struct {
 	Duration     time.Duration
 	SocketPath   string
 	ErrorDetail  string
+}
+
+// Prober is implemented by transports that can establish their capabilities
+// ahead of doing work, so a preflight check can report an enforcement gap
+// before a run burns a phase rather than after.
+type Prober interface {
+	Probe(ctx context.Context, runtimeName string) (Caps, error)
 }
 
 // Transport executes work for the pipeline.

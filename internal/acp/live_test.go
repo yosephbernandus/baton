@@ -41,3 +41,32 @@ func TestLiveOpenCode(t *testing.T) {
 		t.Logf("  | %s", l)
 	}
 }
+
+// Probe must establish real capabilities without invoking a model. If it ever
+// starts costing a turn, preflight becomes too expensive to run.
+func TestLiveProbeCostsNoTurn(t *testing.T) {
+	if _, err := exec.LookPath("opencode"); err != nil {
+		t.Skip("opencode not installed")
+	}
+	cfg := &config.Config{Runtimes: map[string]config.RuntimeConfig{
+		"opencode": {Command: "opencode", Protocol: config.ProtocolACP, Args: []string{"acp"}},
+	}}
+	tr := New(cfg, func(f string, a ...any) { t.Logf(f, a...) })
+
+	start := time.Now()
+	caps, err := tr.Probe(context.Background(), "opencode")
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	t.Logf("probe took %s, caps=%+v", time.Since(start), caps)
+
+	if !caps.Probed {
+		t.Error("Probed=false after a successful probe")
+	}
+	if caps.ToolRestriction == transport.RestrictNone {
+		t.Errorf("ToolRestriction=%q, want OpenCode's mode toggle to be discovered", caps.ToolRestriction)
+	}
+	if !caps.ModelSelect {
+		t.Error("ModelSelect=false; OpenCode exposes a model config option")
+	}
+}

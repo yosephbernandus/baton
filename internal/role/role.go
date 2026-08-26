@@ -2,6 +2,7 @@ package role
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -129,6 +130,17 @@ func containsAny(ops []string, targets ...string) bool {
 		}
 	}
 	return false
+}
+
+// Names returns every defined role, sorted, so callers that report per role
+// produce stable output.
+func Names() []string {
+	out := make([]string, 0, len(Roles))
+	for name := range Roles {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func AllowedTools(roleName string) []string {

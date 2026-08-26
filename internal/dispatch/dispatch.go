@@ -7,6 +7,7 @@ package dispatch
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/yosephbernandus/baton/internal/acp"
 	"github.com/yosephbernandus/baton/internal/config"
@@ -48,6 +49,39 @@ func (m *Mux) transportFor(runtimeName string) transport.Transport {
 // Capabilities reports what the runtime's transport can do.
 func (m *Mux) Capabilities(runtimeName string) transport.Caps {
 	return m.transportFor(runtimeName).Capabilities(runtimeName)
+}
+
+// Probe establishes a runtime's capabilities ahead of any work, so a preflight
+// check can report an enforcement gap before a run rather than after. Transports
+// that already know what they can do answer without contacting anything.
+func (m *Mux) Probe(ctx context.Context, runtimeName string) (transport.Caps, error) {
+	if p, ok := m.transportFor(runtimeName).(transport.Prober); ok {
+		return p.Probe(ctx, runtimeName)
+	}
+	return m.Capabilities(runtimeName), nil
+}
+
+// ProbeAll resolves capabilities for every named runtime. A runtime that cannot
+// be reached is reported through err and left out of the map, so a caller can
+// tell "no answer" from "answered, and cannot".
+func (m *Mux) ProbeAll(ctx context.Context, runtimeNames []string) (map[string]transport.Caps, []error) {
+	out := make(map[string]transport.Caps)
+	var errs []error
+	for _, name := range runtimeNames {
+		if name == "" {
+			continue
+		}
+		if _, done := out[name]; done {
+			continue
+		}
+		caps, err := m.Probe(ctx, name)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("probing %s: %w", name, err))
+			continue
+		}
+		out[name] = caps
+	}
+	return out, errs
 }
 
 // Execute runs one request on the runtime's transport.
