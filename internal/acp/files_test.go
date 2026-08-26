@@ -266,3 +266,49 @@ func acpGitRepo(t *testing.T) string {
 	t.Cleanup(func() { _ = os.Chdir(prev) })
 	return dir
 }
+
+// Persistent sessions are declined, not unavailable. Agents advertise them —
+// OpenCode answers initialize with loadSession, fork, list and resume — but
+// baton holds one session per turn so that compaction gates and the librarian
+// keep operating on the whole of a worker's context, and so an L3 retry can
+// actually start fresh.
+//
+// This is a decision with reasons, recorded in docs/adr/027-per-turn-acp-sessions.md.
+// If it is ever reversed, read that first: the objections are about correctness,
+// not effort.
+func TestSessionsAreDeliberatelyPerTurn(t *testing.T) {
+	dir := acpGitRepo(t)
+
+	agent := filepath.Join(dir, "capable-agent.sh")
+	// An agent advertising every session capability there is.
+	script := `#!/usr/bin/env bash
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"close":{},"fork":{},"list":{},"resume":{}}},"agentInfo":{"name":"capable","version":"0"}}}\n' "$id" ;;
+    *'"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s1"}}\n' "$id" ;;
+  esac
+done
+`
+	if err := os.WriteFile(agent, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{Runtimes: map[string]config.RuntimeConfig{
+		"capable": {Command: agent, Protocol: config.ProtocolACP},
+	}}
+	tr := New(cfg, func(string, ...any) {})
+
+	caps, err := tr.Probe(context.Background(), "capable")
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if !caps.Probed {
+		t.Fatal("Probed=false after a successful handshake")
+	}
+	if caps.Persistent {
+		t.Error("Persistent=true: baton must not claim a cross-phase session it does not hold")
+	}
+}
