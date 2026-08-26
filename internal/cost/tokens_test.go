@@ -19,32 +19,64 @@ func TestEstimateFromTokensPricesInputAndOutput(t *testing.T) {
 	approx(t, got, 18, "sonnet 1M in + 1M out")
 }
 
-// Reported input totals include cached reads, so billing both would charge the
-// cached tokens twice.
-func TestCachedReadsAreNotChargedTwice(t *testing.T) {
+// Input and cached reads are disjoint counters: input is what was sent fresh,
+// cached is what came from a prompt cache. Measured against OpenCode, total ==
+// input + output + cached exactly.
+//
+// This started out assuming input included cached. That under-billed and made
+// cache rates read above 100% — a real pipeline reported 3210%.
+func TestInputAndCachedReadsArePricedSeparately(t *testing.T) {
 	// sonnet: $3/M in, $0.30/M cached.
-	// 1M input of which 800k cached → 200k at 3 + 800k at 0.30.
-	got := EstimateFromTokens("sonnet", Usage{InputTokens: 1_000_000, CachedReadTokens: 800_000})
+	got := EstimateFromTokens("sonnet", Usage{InputTokens: 200_000, CachedReadTokens: 800_000})
 	approx(t, got, 0.2*3+0.8*0.3, "sonnet with cached reads")
 
-	full := EstimateFromTokens("sonnet", Usage{InputTokens: 1_000_000})
-	if got >= full {
-		t.Errorf("cached reads cost %v, want less than the uncached %v", got, full)
+	// Cached reads are additional input, so they cost more than not having them.
+	bare := EstimateFromTokens("sonnet", Usage{InputTokens: 200_000})
+	if got <= bare {
+		t.Errorf("with cached reads %v, want more than without %v — they are extra input", got, bare)
+	}
+	// And they are cheaper than the same volume sent fresh.
+	allFresh := EstimateFromTokens("sonnet", Usage{InputTokens: 1_000_000})
+	if got >= allFresh {
+		t.Errorf("cached %v, want less than the same volume fresh %v", got, allFresh)
 	}
 }
 
 // A model with no cached rate bills cached reads at the input rate rather than
-// dropping them.
+// treating them as free.
 func TestCachedReadsFallBackToInputRate(t *testing.T) {
 	got := EstimateFromTokens("gpt-4o", Usage{InputTokens: 1_000_000, CachedReadTokens: 500_000})
-	approx(t, got, 2.5, "gpt-4o ignores an absent cached rate")
+	approx(t, got, 1.5*2.5, "gpt-4o bills cached reads at the input rate")
 }
 
-// Cached counts larger than the input total must not produce a negative charge.
-func TestCachedReadsExceedingInputDoNotGoNegative(t *testing.T) {
-	got := EstimateFromTokens("sonnet", Usage{InputTokens: 100, CachedReadTokens: 5000})
-	if got < 0 {
-		t.Errorf("estimate=%v, want no negative charge", got)
+// Cache rate is cached over all input, so it can never exceed 100%.
+func TestCacheRateCannotExceedOneHundredPercent(t *testing.T) {
+	e := Entry{Usage: &Usage{InputTokens: 144, CachedReadTokens: 9536}}
+	rate := e.CacheRate()
+	if rate < 0 || rate > 1 {
+		t.Fatalf("rate=%v, want a share between 0 and 1", rate)
+	}
+	approx(t, rate, 9536.0/(144.0+9536.0), "phase 8 of a measured pipeline run")
+}
+
+// A turn that was served entirely from cache still counts as measured.
+func TestAllCachedTurnIsStillMeasured(t *testing.T) {
+	tr, err := NewTracker(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Record(Entry{
+		TaskID: "t1", Model: "sonnet", Runtime: "acp",
+		Duration: time.Minute, Usage: &Usage{CachedReadTokens: 9536},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := tr.ReadAll()
+	if entries[0].Source != SourceMeasured {
+		t.Errorf("source=%q, want %q", entries[0].Source, SourceMeasured)
+	}
+	if entries[0].Estimate <= 0 {
+		t.Error("estimate=0, want cached reads to cost something")
 	}
 }
 
@@ -166,5 +198,8 @@ func TestSummarySeparatesMeasuredFromInferred(t *testing.T) {
 	}
 	if s.InputTokens != 1_000_000 {
 		t.Errorf("InputTokens=%d, want 1000000", s.InputTokens)
+	}
+	if rate := s.CacheRate(); rate != 0 {
+		t.Errorf("CacheRate=%v, want 0 when nothing was cached", rate)
 	}
 }

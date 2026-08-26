@@ -79,12 +79,12 @@ func TestFindNextPhaseID(t *testing.T) {
 
 func TestResolveComplexity(t *testing.T) {
 	tests := []struct {
-		name       string
-		flag       string
-		specValue  string
-		s          *spec.Spec
-		config     string
-		want       string
+		name      string
+		flag      string
+		specValue string
+		s         *spec.Spec
+		config    string
+		want      string
 	}{
 		{"flag wins", "LARGE", "MEDIUM", nil, "SMALL", "LARGE"},
 		{"spec value wins", "", "MEDIUM", nil, "SMALL", "MEDIUM"},

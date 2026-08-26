@@ -312,3 +312,59 @@ done
 		t.Error("Persistent=true: baton must not claim a cross-phase session it does not hold")
 	}
 }
+
+func kindEvent(kind string, paths ...string) proto.Event {
+	return proto.Event{ToolCall: &proto.ToolCall{
+		ID: "c1", Name: "t", Kind: kind, Status: "completed", Locations: paths,
+	}}
+}
+
+// Reading a file is not changing it. A tool_call reports locations either way,
+// and attributing the read ones made a read-only role fail its own boundary
+// check for reading the context files it was handed.
+func TestReadLocationsAreNotChanges(t *testing.T) {
+	cwd, _ := os.Getwd()
+	for _, kind := range []string{"read", "search", "think", "fetch", "switch_mode", "other", ""} {
+		got := mergeFilesChanged(nil, []proto.Event{
+			kindEvent(kind, filepath.Join(cwd, "transport.go")),
+		})
+		if len(got) != 0 {
+			t.Errorf("kind %q produced %v, want no changes", kind, got)
+		}
+	}
+}
+
+func TestMutatingKindsAreChanges(t *testing.T) {
+	cwd, _ := os.Getwd()
+	for _, kind := range []string{"edit", "delete", "move"} {
+		got := mergeFilesChanged(nil, []proto.Event{
+			kindEvent(kind, filepath.Join(cwd, "transport.go")),
+		})
+		if !slices.Contains(got, "transport.go") {
+			t.Errorf("kind %q produced %v, want the file attributed", kind, got)
+		}
+	}
+}
+
+// A shell command can change files, but it names none — it names the directory
+// it ran in. Git catches the change; letting an execute location count would
+// attribute the working directory instead.
+func TestExecuteLocationsAreLeftToGit(t *testing.T) {
+	cwd, _ := os.Getwd()
+	got := mergeFilesChanged(nil, []proto.Event{kindEvent("execute", cwd)})
+	if len(got) != 0 {
+		t.Errorf("execute produced %v, want none: git is the authority for shell edits", got)
+	}
+}
+
+// Git stays authoritative regardless of what the tool calls claimed.
+func TestGitStillReportsWhatToolKindsDoNot(t *testing.T) {
+	cwd, _ := os.Getwd()
+	got := mergeFilesChanged([]string{"changed-by-shell.go"}, []proto.Event{
+		kindEvent("execute", cwd),
+		kindEvent("read", filepath.Join(cwd, "transport.go")),
+	})
+	if len(got) != 1 || got[0] != "changed-by-shell.go" {
+		t.Errorf("files=%v, want only what git observed", got)
+	}
+}
