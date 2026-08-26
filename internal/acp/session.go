@@ -21,6 +21,10 @@ type session struct {
 	conn      *Conn
 	sessionID string
 
+	// effectiveModel is what the agent reported it is running, which is the
+	// only way to know when the request asked for "auto".
+	effectiveModel string
+
 	// allowedTools is the role boundary. Empty means unrestricted.
 	allowedTools map[string]bool
 	restricted   bool

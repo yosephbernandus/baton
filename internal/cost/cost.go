@@ -133,7 +133,12 @@ var tokenRates = map[string]TokenRate{
 
 // defaultTokenRate prices a model nothing knows about. Charging something keeps
 // an unknown model from looking free next to a priced one.
-var defaultTokenRate = TokenRate{InputPerM: 1, OutputPerM: 4}
+//
+// The cached rate is a tenth of input, which is roughly where every provider in
+// the table above puts it. Leaving it at zero would bill cached reads as fresh
+// input, and a measured pipeline run came back 98% cached — so the fallback for
+// an unrecognised model would have overstated it by an order of magnitude.
+var defaultTokenRate = TokenRate{InputPerM: 1, OutputPerM: 4, CachedPerM: 0.1}
 
 // SetTokenRates merges configured overrides over the built-in defaults.
 func SetTokenRates(overrides map[string]TokenRate) {

@@ -481,7 +481,9 @@ func BuildArgs(rt *config.RuntimeConfig, model, prompt string, s *spec.Spec) []s
 			args = append(args, p)
 		}
 	}
-	if rt.ModelFlag != "" {
+	// "auto" means leave the runtime on its default, so the flag is omitted
+	// rather than passed a value no runtime knows.
+	if rt.ModelFlag != "" && rt.ModelSelected(model) {
 		args = append(args, rt.ModelFlag, model)
 	}
 	if rt.ContextFlag != "" && s != nil && len(s.ContextFiles) > 0 {

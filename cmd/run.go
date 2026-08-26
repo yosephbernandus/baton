@@ -289,10 +289,14 @@ func NewRunCmd() *cobra.Command {
 			_ = store.Update(t)
 
 			if tracker, err := cost.NewTracker(cfg.ResultDir); err == nil {
+				recordedModel := model
+				if result.EffectiveModel != "" {
+					recordedModel = result.EffectiveModel
+				}
 				_ = tracker.Record(cost.Entry{
 					TaskID:   taskID,
 					Runtime:  runtimeName,
-					Model:    model,
+					Model:    recordedModel,
 					Duration: result.Duration,
 					Status:   result.Status,
 					Usage:    costUsage(result.Usage),

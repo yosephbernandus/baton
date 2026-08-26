@@ -9,7 +9,7 @@ import (
 type PhaseGroup int
 
 const (
-	GroupPlanning       PhaseGroup = iota
+	GroupPlanning PhaseGroup = iota
 	GroupImplementation
 	GroupVerification
 	GroupTesting
@@ -36,7 +36,7 @@ func PhaseGroupOf(phaseID int) PhaseGroup {
 type RecordTier int
 
 const (
-	TierFull    RecordTier = iota
+	TierFull RecordTier = iota
 	TierSummary
 	TierMinimal
 	TierOmit

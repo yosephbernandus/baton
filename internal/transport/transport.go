@@ -103,6 +103,13 @@ type Result struct {
 	// Usage is nil unless the transport reports token accounting.
 	Usage *proto.Usage
 
+	// EffectiveModel is the model the worker actually ran on, when the
+	// transport can tell. It differs from the requested one whenever the
+	// request said "auto": cost is priced per model, so recording the sentinel
+	// would price every such run at the unknown-model fallback rate.
+	// Empty means the transport could not determine it.
+	EffectiveModel string
+
 	ChecksFailed []string
 	FilesChanged []string
 	Duration     time.Duration

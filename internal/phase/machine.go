@@ -860,6 +860,12 @@ func (p *Pipeline) recordCost(taskID, runtimeName, model string, res *transport.
 			TotalTokens:      res.Usage.TotalTokens,
 		}
 	}
+	// Record what actually ran. A request of "auto" names no model, and
+	// pricing is per model, so recording the sentinel would put every such
+	// phase on the unknown-model fallback rate.
+	if res.EffectiveModel != "" {
+		model = res.EffectiveModel
+	}
 	_ = p.costTracker.Record(cost.Entry{
 		TaskID:   taskID,
 		Runtime:  runtimeName,

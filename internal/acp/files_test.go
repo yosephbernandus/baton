@@ -368,3 +368,90 @@ func TestGitStillReportsWhatToolKindsDoNot(t *testing.T) {
 		t.Errorf("files=%v, want only what git observed", got)
 	}
 }
+
+// A request of "auto" names no model, and cost is priced per model, so recording
+// the sentinel puts every such run on the unknown-model fallback rate. The agent
+// reports what it is actually on; that is what gets recorded.
+func TestEffectiveModelComesFromTheAgent(t *testing.T) {
+	dir := acpGitRepo(t)
+
+	agent := filepath.Join(dir, "model-agent.sh")
+	script := `#!/usr/bin/env bash
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentInfo":{"name":"fake","version":"0"}}}\n' "$id" ;;
+    *'"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s1","configOptions":[{"id":"model","category":"model","type":"select","currentValue":"vendor/actual-model","options":[{"value":"vendor/actual-model","name":"Actual"}]}]}}\n' "$id" ;;
+    *'"session/prompt"'*)
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"BATON:C:setup:done\n"}}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
+  esac
+done
+`
+	if err := os.WriteFile(agent, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{Runtimes: map[string]config.RuntimeConfig{
+		"fake": {Command: agent, Protocol: config.ProtocolACP},
+	}}
+	tr := New(cfg, func(string, ...any) {})
+
+	res, err := tr.Execute(context.Background(), transport.Request{
+		TaskID: "t1", RuntimeName: "fake", Prompt: "x",
+		// The sentinel: baton selects nothing and the agent stays on its default.
+		Model:    config.ModelAuto,
+		Liveness: transport.LivenessConfig{AbsoluteTimeout: 30 * time.Second},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.Status != "completed" {
+		t.Fatalf("status=%q detail=%q", res.Status, res.ErrorDetail)
+	}
+	if res.EffectiveModel != "vendor/actual-model" {
+		t.Errorf("EffectiveModel=%q, want what the agent reported it is running", res.EffectiveModel)
+	}
+}
+
+// An agent that exposes no model option leaves it empty rather than guessing,
+// so the caller keeps whatever it asked for.
+func TestEffectiveModelEmptyWhenAgentOffersNoOption(t *testing.T) {
+	dir := acpGitRepo(t)
+
+	agent := filepath.Join(dir, "plain-agent.sh")
+	script := `#!/usr/bin/env bash
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentInfo":{"name":"plain","version":"0"}}}\n' "$id" ;;
+    *'"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s1"}}\n' "$id" ;;
+    *'"session/prompt"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
+  esac
+done
+`
+	if err := os.WriteFile(agent, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{Runtimes: map[string]config.RuntimeConfig{
+		"plain": {Command: agent, Protocol: config.ProtocolACP},
+	}}
+	tr := New(cfg, func(string, ...any) {})
+
+	res, err := tr.Execute(context.Background(), transport.Request{
+		TaskID: "t1", RuntimeName: "plain", Prompt: "x", Model: "sonnet",
+		Liveness: transport.LivenessConfig{AbsoluteTimeout: 30 * time.Second},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.EffectiveModel != "" {
+		t.Errorf("EffectiveModel=%q, want empty when the agent exposes no model option", res.EffectiveModel)
+	}
+}
