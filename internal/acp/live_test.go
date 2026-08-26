@@ -8,11 +8,13 @@ package acp
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -153,5 +155,107 @@ func TestLiveShellEditIsStillAttributed(t *testing.T) {
 	}
 	if !slices.Contains(res.FilesChanged, "target.txt") {
 		t.Errorf("FilesChanged=%v, want the repo-relative target.txt", res.FilesChanged)
+	}
+}
+
+// The field is configId, not optionId. Getting it wrong was silent: OpenCode
+// answered -32602 on stderr, the option kept its previous value, and baton
+// carried on believing it had applied a restriction it had not. A read-only
+// phase ran with edit tools intact because of exactly this.
+//
+// Drive a real agent with a read-only role and assert nothing was rejected.
+func TestLiveReadOnlyModeIsAccepted(t *testing.T) {
+	if _, err := exec.LookPath("opencode"); err != nil {
+		t.Skip("opencode not installed")
+	}
+
+	var mu sync.Mutex
+	var logged []string
+	cfg := &config.Config{Runtimes: map[string]config.RuntimeConfig{
+		"opencode": {Command: "opencode", Protocol: config.ProtocolACP, Args: []string{"acp"}},
+	}}
+	tr := New(cfg, func(f string, a ...any) {
+		mu.Lock()
+		logged = append(logged, fmt.Sprintf(f, a...))
+		mu.Unlock()
+		t.Logf(f, a...)
+	})
+
+	res, err := tr.Execute(context.Background(), transport.Request{
+		TaskID: "live-mode", RuntimeName: "opencode",
+		Prompt: "Reply with exactly this line and nothing else: BATON:C:setup:done:ok",
+		// A read-only boundary, so the transport asks for a mode that
+		// withholds edit tools.
+		AllowedTools: []string{"Read", "Grep", "Glob"},
+		Liveness:     transport.LivenessConfig{AbsoluteTimeout: 120 * time.Second},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.Status != "completed" {
+		t.Fatalf("status=%q detail=%q", res.Status, res.ErrorDetail)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, line := range logged {
+		if strings.Contains(line, "-32602") || strings.Contains(line, "Invalid params") {
+			t.Fatalf("agent rejected a config option: %q", line)
+		}
+		if strings.Contains(line, "no read-only mode") {
+			t.Fatalf("read-only mode was not applied: %q", line)
+		}
+	}
+}
+
+// A tool_call reports locations for reads as much as for writes. Taking them all
+// attributed every file a phase merely looked at, so a read-only role failed its
+// own boundary check for reading the context files it was handed — which is what
+// every read-only phase does.
+func TestLiveReadingIsNotAChange(t *testing.T) {
+	if _, err := exec.LookPath("opencode"); err != nil {
+		t.Skip("opencode not installed")
+	}
+	dir := acpGitRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "other.txt"), []byte("data\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "-A"}, {"commit", "-qm", "more"}} {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	cfg := &config.Config{Runtimes: map[string]config.RuntimeConfig{
+		"opencode": {Command: "opencode", Protocol: config.ProtocolACP, Args: []string{"acp"}},
+	}}
+	tr := New(cfg, func(f string, a ...any) { t.Logf(f, a...) })
+
+	res, err := tr.Execute(context.Background(), transport.Request{
+		TaskID: "read-only", RuntimeName: "opencode",
+		Prompt: "Read target.txt and other.txt. Do not modify anything. " +
+			"Then reply with exactly: BATON:C:setup:done:read",
+		AllowedTools: []string{"Read", "Grep", "Glob"},
+		Liveness:     transport.LivenessConfig{AbsoluteTimeout: 150 * time.Second},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	var readLocations int
+	for _, ev := range res.Events {
+		if ev.ToolCall != nil && ev.ToolCall.Kind == "read" {
+			readLocations += len(ev.ToolCall.Locations)
+		}
+	}
+	if readLocations == 0 {
+		t.Skip("agent reported no read locations; nothing to misattribute")
+	}
+	t.Logf("read tool calls named %d paths; FilesChanged=%v", readLocations, res.FilesChanged)
+
+	if len(res.FilesChanged) != 0 {
+		t.Errorf("FilesChanged=%v, want none: the turn only read", res.FilesChanged)
 	}
 }

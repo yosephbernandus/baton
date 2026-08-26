@@ -61,6 +61,36 @@ type Summary struct {
 	CachedTokens int `json:"cached_read_tokens"`
 }
 
+// CacheRate is the share of all input served from a prompt cache, or -1 when
+// nothing measured reported any input at all.
+//
+// Input and cached reads are disjoint counters, so the denominator is their sum.
+//
+// This is the figure that says whether re-priming a worker each phase is
+// actually costing anything: a high rate means the repeated prefix is being
+// served cheaply, and the case for carrying one session across phases is
+// correspondingly weaker.
+func (s *Summary) CacheRate() float64 {
+	total := s.InputTokens + s.CachedTokens
+	if total <= 0 {
+		return -1
+	}
+	return float64(s.CachedTokens) / float64(total)
+}
+
+// CacheRate is the share of one entry's input served from cache, or -1 when the
+// entry reported no input.
+func (e Entry) CacheRate() float64 {
+	if e.Usage == nil {
+		return -1
+	}
+	total := e.Usage.InputTokens + e.Usage.CachedReadTokens
+	if total <= 0 {
+		return -1
+	}
+	return float64(e.Usage.CachedReadTokens) / float64(total)
+}
+
 var modelRates = map[string]float64{
 	"opus":          0.075,
 	"sonnet":        0.015,
@@ -123,26 +153,26 @@ func RateFor(model string) (TokenRate, bool) {
 
 // EstimateFromTokens prices a turn from what the runtime counted.
 //
-// Cached reads are billed separately when a rate says so, and are subtracted
-// from the input count rather than charged twice — reported input totals
-// include them.
+// InputTokens and CachedReadTokens are disjoint: input counts what was sent
+// fresh and cached counts what was served from a prompt cache, so total input is
+// their sum. Measured against OpenCode, total == input + output + cached exactly,
+// and the convention matches how the Anthropic API reports the same figures.
+//
+// This started out assuming input included cached, which under-billed and made
+// cache rates read above 100%.
 func EstimateFromTokens(model string, u Usage) float64 {
 	rate, _ := RateFor(model)
 
-	input := u.InputTokens
-	var cachedCost float64
-	if u.CachedReadTokens > 0 && rate.CachedPerM > 0 {
-		cached := u.CachedReadTokens
-		if cached > input {
-			cached = input
-		}
-		input -= cached
-		cachedCost = float64(cached) / 1e6 * rate.CachedPerM
+	cachedRate := rate.CachedPerM
+	if cachedRate <= 0 {
+		// No cache rate configured: cached reads bill as ordinary input rather
+		// than free.
+		cachedRate = rate.InputPerM
 	}
 
-	return float64(input)/1e6*rate.InputPerM +
-		float64(u.OutputTokens)/1e6*rate.OutputPerM +
-		cachedCost
+	return float64(u.InputTokens)/1e6*rate.InputPerM +
+		float64(u.CachedReadTokens)/1e6*cachedRate +
+		float64(u.OutputTokens)/1e6*rate.OutputPerM
 }
 
 // EstimateCost infers a figure from how long a worker ran. It is the fallback
@@ -177,7 +207,8 @@ func (t *Tracker) Record(entry Entry) error {
 	// Prefer what the runtime counted. Elapsed time is only a stand-in for
 	// runtimes that report nothing.
 	if entry.Source == "" {
-		if entry.Usage != nil && (entry.Usage.InputTokens > 0 || entry.Usage.OutputTokens > 0) {
+		if entry.Usage != nil && (entry.Usage.InputTokens > 0 || entry.Usage.OutputTokens > 0 ||
+			entry.Usage.CachedReadTokens > 0) {
 			entry.Source = SourceMeasured
 		} else {
 			entry.Source = SourceElapsed

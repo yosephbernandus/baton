@@ -332,7 +332,7 @@ func (t *Transport) handshake(
 	caps.Permission = true
 
 	modelOpt, hasModelOpt := findOption(newResp.ConfigOptions, "model")
-	caps.ModelSelect = hasModelOpt || newResp.Models != nil
+	caps.ModelSelect = hasModelOpt
 
 	modeOpt, hasModeOpt := findOption(newResp.ConfigOptions, "mode")
 	if hasModeOpt || newResp.Modes != nil {
@@ -342,7 +342,7 @@ func (t *Transport) handshake(
 	}
 
 	if req.Model != "" && caps.ModelSelect {
-		if err := t.selectModel(ctx, conn, sess.sessionID, req.Model, modelOpt, hasModelOpt, newResp.Models); err != nil {
+		if err := t.selectModel(ctx, conn, sess.sessionID, req.Model, modelOpt); err != nil {
 			// A model baton could not select is worth reporting, not worth
 			// failing the turn over: the agent still has a working default.
 			t.log("acp: %v", err)
@@ -358,30 +358,22 @@ func (t *Transport) handshake(
 	return caps, nil
 }
 
+// selectModel picks a model through the general config-option mechanism, which
+// is how protocol v1 exposes it: an option whose category is "model".
+//
+// There is no session/set_model in v1. Hermes reaches for one, but that comes
+// from a different protocol revision, and inventing it here against the schema
+// baton pins would be a call no v1 agent answers.
 func (t *Transport) selectModel(
-	ctx context.Context, conn *Conn, sessionID, model string,
-	opt configOption, hasOpt bool, models *modelState,
+	ctx context.Context, conn *Conn, sessionID, model string, opt configOption,
 ) error {
-	if hasOpt {
-		value, ok := matchChoice(opt.Options, model)
-		if !ok {
-			return fmt.Errorf("model %q not offered by the agent, keeping %q", model, opt.CurrentValue)
-		}
-		return conn.Call(ctx, methodSetConfigOption, setConfigOptionRequest{
-			SessionID: sessionID, OptionID: "model", Value: value,
-		}, nil)
+	value, ok := matchChoice(opt.Options, model)
+	if !ok {
+		return fmt.Errorf("model %q not offered by the agent, keeping %q", model, opt.CurrentValue)
 	}
-	if models != nil {
-		for _, m := range models.AvailableModels {
-			if strings.EqualFold(m.ModelID, model) || strings.Contains(strings.ToLower(m.ModelID), strings.ToLower(model)) {
-				return conn.Call(ctx, methodSetModel, setModelRequest{
-					SessionID: sessionID, ModelID: m.ModelID,
-				}, nil)
-			}
-		}
-		return fmt.Errorf("model %q not offered by the agent", model)
-	}
-	return nil
+	return conn.Call(ctx, methodSetConfigOption, setConfigOptionRequest{
+		SessionID: sessionID, ConfigID: "model", Value: value,
+	}, nil)
 }
 
 // selectReadOnlyMode asks the agent for a mode that withholds edit tools. This
@@ -399,7 +391,7 @@ func (t *Transport) selectReadOnlyMode(
 			return fmt.Errorf("agent offers no read-only mode; role tool boundary is unenforced")
 		}
 		return conn.Call(ctx, methodSetConfigOption, setConfigOptionRequest{
-			SessionID: sessionID, OptionID: "mode", Value: value,
+			SessionID: sessionID, ConfigID: "mode", Value: value,
 		}, nil)
 	}
 	if modes != nil {
@@ -496,13 +488,32 @@ func statusFor(reason string) string {
 	}
 }
 
-// filesTouched collects the paths tool calls reported. The agent names them, so
-// baton does not need a git diff to know what a phase changed.
+// Tool kinds that change a file, per the protocol's ToolKind. Everything else —
+// read, search, think, fetch, switch_mode, other — reports locations too, and
+// none of those locations is a change.
+//
+// execute is deliberately absent. A shell command can change files, but it names
+// none, and git already catches it; letting an execute location count would
+// attribute whatever directory the command ran in.
+func isMutatingKind(kind string) bool {
+	switch kind {
+	case "edit", "delete", "move":
+		return true
+	}
+	return false
+}
+
+// filesTouched collects the paths that mutating tool calls reported.
+//
+// Filtering on kind is the whole job. A tool_call reports locations for reads as
+// much as for writes, so taking them all attributed every file a phase merely
+// looked at — which made a read-only role fail its own boundary check for
+// reading the context files it was handed.
 func filesTouched(events []proto.Event) []string {
 	seen := make(map[string]bool)
 	var out []string
 	for _, ev := range events {
-		if ev.ToolCall == nil {
+		if ev.ToolCall == nil || !isMutatingKind(ev.ToolCall.Kind) {
 			continue
 		}
 		for _, p := range ev.ToolCall.Locations {

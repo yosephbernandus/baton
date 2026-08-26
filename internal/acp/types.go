@@ -23,7 +23,6 @@ const (
 	methodSessionPrompt   = "session/prompt"
 	methodSessionCancel   = "session/cancel"
 	methodSetConfigOption = "session/set_config_option"
-	methodSetModel        = "session/set_model"
 	methodSetMode         = "session/set_mode"
 )
 
@@ -76,14 +75,14 @@ type newSessionRequest struct {
 	MCPServers []any  `json:"mcpServers"`
 }
 
-// newSessionResponse covers both mechanisms agents use to expose model and mode
-// selection. OpenCode returns configOptions; Hermes returns models and modes.
-// Both are valid, so which one is populated is discovered per agent rather than
-// assumed.
+// newSessionResponse covers both mechanisms protocol v1 defines for selection.
+// configOptions is the general one, carrying a category that says whether an
+// option selects a model, a mode, or something else; modes is the dedicated
+// mode selector. Which an agent populates is discovered per agent rather than
+// assumed — OpenCode answers with configOptions.
 type newSessionResponse struct {
 	SessionID     string         `json:"sessionId"`
 	ConfigOptions []configOption `json:"configOptions"`
-	Models        *modelState    `json:"models"`
 	Modes         *modeState     `json:"modes"`
 }
 
@@ -102,16 +101,6 @@ type configOptionChoice struct {
 	Description string `json:"description"`
 }
 
-type modelState struct {
-	CurrentModelID  string      `json:"currentModelId"`
-	AvailableModels []modelInfo `json:"availableModels"`
-}
-
-type modelInfo struct {
-	ModelID string `json:"modelId"`
-	Name    string `json:"name"`
-}
-
 type modeState struct {
 	CurrentModeID  string     `json:"currentModeId"`
 	AvailableModes []modeInfo `json:"availableModes"`
@@ -124,15 +113,19 @@ type modeInfo struct {
 
 // --- selection ---
 
+// setConfigOptionRequest sets one session config option.
+//
+// The field is configId, not optionId. Getting that wrong is silent: the agent
+// answers -32602 on stderr, the option keeps its previous value, and baton
+// carries on believing it applied a restriction it did not. A read-only role ran
+// with edit tools intact because of exactly this.
+//
+// A bare string Value is the wire default when no type discriminator is present,
+// which is what a select option takes.
 type setConfigOptionRequest struct {
 	SessionID string `json:"sessionId"`
-	OptionID  string `json:"optionId"`
+	ConfigID  string `json:"configId"`
 	Value     string `json:"value"`
-}
-
-type setModelRequest struct {
-	SessionID string `json:"sessionId"`
-	ModelID   string `json:"modelId"`
 }
 
 type setModeRequest struct {
