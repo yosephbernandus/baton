@@ -6,10 +6,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/yosephbernandus/baton/internal/config"
+	gitpkg "github.com/yosephbernandus/baton/internal/git"
 	"github.com/yosephbernandus/baton/internal/proto"
 	"github.com/yosephbernandus/baton/internal/transport"
 )
@@ -107,6 +109,13 @@ func (t *Transport) Execute(ctx context.Context, req transport.Request) (*transp
 		defer stop()
 	}
 
+	// Tool calls report the files they touched, but only for tools that name
+	// them: an agent that edits through a shell command reports nothing. Git is
+	// the authoritative record of what actually changed, and role boundary
+	// verification runs on this — so it must not depend on the agent's account
+	// of its own work.
+	beforeSnap, _ := gitpkg.TakeSnapshot()
+
 	var resp promptResponse
 	promptErr := conn.Call(turnCtx, methodSessionPrompt, promptRequest{
 		SessionID: sess.sessionID,
@@ -136,8 +145,71 @@ func (t *Transport) Execute(ctx context.Context, req transport.Request) (*transp
 		result.ExitCode = 1
 		result.ErrorDetail = fmt.Sprintf("agent stopped: %s", resp.StopReason)
 	}
-	result.FilesChanged = filesTouched(events)
+	afterSnap, _ := gitpkg.TakeSnapshot()
+	result.FilesChanged = mergeFilesChanged(gitpkg.DetectChanges(beforeSnap, afterSnap), events)
 	return result, nil
+}
+
+// mergeFilesChanged combines what git observed with what tool calls reported.
+//
+// Git is authoritative: it sees every change on disk, including ones made
+// through a shell command that named no files. Tool locations add what git
+// cannot report — a write to an ignored path — and are relativised first,
+// because agents report absolute paths while git reports repo-relative ones,
+// and downstream matching on role file scope and declared locks compares them
+// as plain strings.
+func mergeFilesChanged(fromGit []string, events []proto.Event) []string {
+	seen := make(map[string]bool, len(fromGit))
+	out := make([]string, 0, len(fromGit))
+	for _, f := range fromGit {
+		if f != "" && !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+
+	root, err := os.Getwd()
+	if err != nil {
+		root = ""
+	}
+	for _, p := range filesTouched(events) {
+		rel := relativise(root, p)
+		if rel == "" || seen[rel] || !isFileChange(p) {
+			continue
+		}
+		seen[rel] = true
+		out = append(out, rel)
+	}
+	return out
+}
+
+// isFileChange rejects locations that are not a changed file. Agents report the
+// working directory as a tool location — a live turn produced "." alongside the
+// file it actually edited — and a directory in this list would be read as a
+// modified file by role boundary verification and by dirty-bit tracking.
+//
+// A path that cannot be stat'd is kept: a deleted file is a real change, and
+// dropping it would hide exactly the edit worth noticing.
+func isFileChange(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return true
+	}
+	return !info.IsDir()
+}
+
+// relativise expresses an agent-reported path relative to the working tree.
+// A path outside the tree is left as it is: reporting it wrongly as a repo path
+// would be worse than reporting where it really is.
+func relativise(root, path string) string {
+	if root == "" || !filepath.IsAbs(path) {
+		return path
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return path
+	}
+	return rel
 }
 
 // process is one spawned agent and the connection to it.
