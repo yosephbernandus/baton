@@ -93,9 +93,19 @@ func (t *Transport) Execute(ctx context.Context, req transport.Request) (*transp
 
 	sess, conn := proc.sess, proc.conn
 
+	// Tool calls report the files they touched, but only for tools that name
+	// them: an agent that edits through a shell command reports nothing. Git is
+	// the authoritative record of what actually changed, and role boundary
+	// verification reads it — so it must not depend on the agent's account of
+	// its own work.
+	//
+	// Taken before the handshake so a turn that fails at any point after the
+	// agent started still reports what it changed.
+	beforeSnap, _ := gitpkg.TakeSnapshot()
+
 	caps, err := t.handshake(proc.ctx, conn, sess, req)
 	if err != nil {
-		return t.failure(sess, start, err)
+		return t.failure(sess, start, beforeSnap, err)
 	}
 	t.caps[req.RuntimeName] = caps
 
@@ -109,13 +119,6 @@ func (t *Transport) Execute(ctx context.Context, req transport.Request) (*transp
 		defer stop()
 	}
 
-	// Tool calls report the files they touched, but only for tools that name
-	// them: an agent that edits through a shell command reports nothing. Git is
-	// the authoritative record of what actually changed, and role boundary
-	// verification runs on this — so it must not depend on the agent's account
-	// of its own work.
-	beforeSnap, _ := gitpkg.TakeSnapshot()
-
 	var resp promptResponse
 	promptErr := conn.Call(turnCtx, methodSessionPrompt, promptRequest{
 		SessionID: sess.sessionID,
@@ -126,7 +129,7 @@ func (t *Transport) Execute(ctx context.Context, req transport.Request) (*transp
 		// Tell the agent to stop before the process is killed, so a session it
 		// persists is not left mid-turn.
 		_ = conn.Notify(methodSessionCancel, cancelNotification{SessionID: sess.sessionID})
-		return t.failure(sess, start, promptErr)
+		return t.failure(sess, start, beforeSnap, promptErr)
 	}
 
 	// The final marker usually arrives without a trailing newline, so flush
@@ -411,16 +414,30 @@ func (t *Transport) selectReadOnlyMode(
 	return fmt.Errorf("agent offers no read-only mode; role tool boundary is unenforced")
 }
 
-func (t *Transport) failure(sess *session, start time.Time, err error) (*transport.Result, error) {
+// failure reports a turn that did not complete. It still reports what changed:
+// a turn that edited files and then failed edited files, and dropping that would
+// hide the edit from role boundary verification and tell dirty-bit tracking that
+// nothing happened upstream.
+func (t *Transport) failure(
+	sess *session, start time.Time, beforeSnap *gitpkg.Snapshot, err error,
+) (*transport.Result, error) {
 	sess.flush()
 	events, output := sess.snapshot()
+
+	var filesChanged []string
+	if beforeSnap != nil {
+		afterSnap, _ := gitpkg.TakeSnapshot()
+		filesChanged = mergeFilesChanged(gitpkg.DetectChanges(beforeSnap, afterSnap), events)
+	}
+
 	return &transport.Result{
-		Status:      "failed",
-		ExitCode:    1,
-		Events:      events,
-		Output:      output,
-		Duration:    time.Since(start),
-		ErrorDetail: err.Error(),
+		Status:       "failed",
+		ExitCode:     1,
+		Events:       events,
+		Output:       output,
+		FilesChanged: filesChanged,
+		Duration:     time.Since(start),
+		ErrorDetail:  err.Error(),
 	}, nil
 }
 
