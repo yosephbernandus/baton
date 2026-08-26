@@ -42,7 +42,32 @@ func NewCostCmd() *cobra.Command {
 			}
 
 			fmt.Printf("Total tasks: %d\n", summary.TotalTasks)
-			fmt.Printf("Estimated total: $%.4f\n\n", summary.TotalEstimate)
+			fmt.Printf("Estimated total: $%.4f\n", summary.TotalEstimate)
+
+			// Say how much of that figure was counted rather than inferred.
+			// A total that mixes both without distinguishing them reads as
+			// precision it does not have.
+			switch {
+			case summary.MeasuredTasks == summary.TotalTasks && summary.TotalTasks > 0:
+				fmt.Printf("  all %d priced from reported tokens\n", summary.MeasuredTasks)
+			case summary.MeasuredTasks > 0:
+				fmt.Printf("  $%.4f from reported tokens (%d of %d tasks)\n",
+					summary.MeasuredEstimate, summary.MeasuredTasks, summary.TotalTasks)
+				fmt.Printf("  $%.4f inferred from elapsed time (%d tasks reported no tokens)\n",
+					summary.TotalEstimate-summary.MeasuredEstimate,
+					summary.TotalTasks-summary.MeasuredTasks)
+			case summary.TotalTasks > 0:
+				fmt.Println("  all inferred from elapsed time; no runtime reported tokens")
+			}
+
+			if summary.InputTokens > 0 || summary.OutputTokens > 0 {
+				fmt.Printf("Tokens: %d in, %d out", summary.InputTokens, summary.OutputTokens)
+				if summary.CachedTokens > 0 {
+					fmt.Printf(" (%d cached reads)", summary.CachedTokens)
+				}
+				fmt.Println()
+			}
+			fmt.Println()
 
 			if len(summary.ByModel) > 0 {
 				fmt.Println("By model:")

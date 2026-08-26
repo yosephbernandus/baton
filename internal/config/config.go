@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/yosephbernandus/baton/internal/cost"
 	"gopkg.in/yaml.v3"
 )
 
@@ -35,6 +36,7 @@ type Config struct {
 	Advisor            AdvisorConfig              `yaml:"escalation_advisor"`
 	Feedback           FeedbackConfig             `yaml:"feedback"`
 	Annealing          AnnealingConfig            `yaml:"annealing"`
+	CostRates          CostRatesConfig            `yaml:"cost_rates"`
 	WorkerProtocol     WorkerProtocolConfig       `yaml:"worker_protocol"`
 	Dispatch           DispatchConfig             `yaml:"dispatch"`
 	Gateway            GatewayConfig              `yaml:"gateway"`
@@ -69,6 +71,10 @@ type OrchestratorConfig struct {
 	Model            string `yaml:"model"`
 	InstructionsFile string `yaml:"instructions_file"`
 }
+
+// CostRatesConfig overrides the built-in per-million-token prices. Only the
+// models named here are affected; the rest keep their defaults.
+type CostRatesConfig map[string]cost.TokenRate
 
 // Transport protocols a runtime can speak.
 const (
@@ -194,6 +200,11 @@ func LoadConfig() (*Config, error) {
 	projectPath := filepath.Join(".baton", "agents.yaml")
 	if err := mergeFromFile(cfg, projectPath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("loading project config: %w", err)
+	}
+
+	// Built-in token prices are coarse defaults; configured ones win.
+	if len(cfg.CostRates) > 0 {
+		cost.SetTokenRates(cfg.CostRates)
 	}
 
 	return cfg, nil
