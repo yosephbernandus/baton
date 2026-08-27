@@ -469,6 +469,7 @@ func generateAgentsYAMLInteractive(allRuntimes []detectedRuntime, orchestrator d
 		b.WriteString("role_models:\n")
 		fmt.Fprintf(&b, "  lead: {runtime: %s, model: %s}\n", orchestrator.Name, orchModel)
 		fmt.Fprintf(&b, "  reviewer: {runtime: %s, model: %s}\n", orchestrator.Name, orchModel)
+		fmt.Fprintf(&b, "  test_lead: {runtime: %s, model: %s}\n", orchestrator.Name, orchModel)
 		fmt.Fprintf(&b, "  developer: {runtime: %s, model: %s}\n", worker.Name, workerModel)
 		fmt.Fprintf(&b, "  tester: {runtime: %s, model: %s}\n", worker.Name, workerModel)
 		b.WriteString("\n")
@@ -586,10 +587,6 @@ func generateAgentsYAML(runtimes []detectedRuntime) string {
 	}
 
 	if hasRuntime(runtimes, "claude-code") {
-		b.WriteString("role_models:\n")
-		b.WriteString("  lead: claude-code\n")
-		b.WriteString("  reviewer: claude-code\n")
-		b.WriteString("  test_lead: claude-code\n")
 		worker := "claude-code"
 		for _, rt := range runtimes {
 			if rt.Name != "claude-code" {
@@ -597,6 +594,13 @@ func generateAgentsYAML(runtimes []detectedRuntime) string {
 				break
 			}
 		}
+		b.WriteString("# Which runtime runs each role. A bare name leaves the model\n")
+		b.WriteString("# on the runtime's default; name one explicitly with:\n")
+		b.WriteString("#   developer: {runtime: opencode, model: kimi}\n")
+		b.WriteString("role_models:\n")
+		b.WriteString("  lead: claude-code\n")
+		b.WriteString("  reviewer: claude-code\n")
+		b.WriteString("  test_lead: claude-code\n")
 		fmt.Fprintf(&b, "  developer: %s\n", worker)
 		fmt.Fprintf(&b, "  tester: %s\n", worker)
 		b.WriteString("\n")

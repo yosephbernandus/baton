@@ -152,6 +152,43 @@ type RoleModelConfig struct {
 	Model   string `yaml:"model"`
 }
 
+// UnmarshalYAML accepts either the explicit mapping or a bare runtime name:
+//
+//	role_models:
+//	  lead: claude-code                 # shorthand
+//	  developer:                        # explicit
+//	    runtime: opencode
+//	    model: kimi
+//
+// The shorthand defaults the model to "auto", which means "let the runtime
+// choose". That matters beyond parsing: resolveRoleRuntime requires both a
+// runtime and a model, so a shorthand that left the model empty would parse and
+// then be silently ignored, falling back to the defaults it was written to
+// override.
+func (r *RoleModelConfig) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		var runtime string
+		if err := value.Decode(&runtime); err != nil {
+			return err
+		}
+		r.Runtime = runtime
+		r.Model = ModelAuto
+		return nil
+	}
+
+	// A named type, so decoding the mapping does not recurse into this method.
+	type roleModelFields RoleModelConfig
+	var fields roleModelFields
+	if err := value.Decode(&fields); err != nil {
+		return err
+	}
+	*r = RoleModelConfig(fields)
+	if r.Model == "" {
+		r.Model = ModelAuto
+	}
+	return nil
+}
+
 type FeedbackConfig struct {
 	Enabled        bool   `yaml:"enabled"`
 	AnalysisWindow string `yaml:"analysis_window"`

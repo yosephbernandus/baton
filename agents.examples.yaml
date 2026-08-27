@@ -113,6 +113,35 @@ runtimes:
       - claude-sonnet
 
 # Defaults when flags omitted
+# Which runtime and model runs each of the five roles. A role listed here
+# overrides `defaults` for the phases that carry it; a role left out uses the
+# defaults.
+#
+# Two forms. A bare runtime name leaves the model on that runtime's default:
+#
+#   role_models:
+#     lead: claude-code
+#
+# Or name the model explicitly, which is what you want when a cheap model is
+# good enough for the work a role does:
+#
+role_models:
+  lead:
+    runtime: claude-code
+    model: sonnet
+  reviewer:
+    runtime: claude-code
+    model: sonnet
+  test_lead:
+    runtime: claude-code
+    model: sonnet
+  developer:
+    runtime: opencode
+    model: kimi
+  tester:
+    runtime: opencode
+    model: kimi
+
 defaults:
   runtime: opencode
   model: kimi
