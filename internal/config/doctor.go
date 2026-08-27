@@ -17,6 +17,11 @@ type DiagnosticResult struct {
 	ArgsError   string
 	Models      []string
 	ProbeResult *ProbeResult
+
+	// Protocol is the transport this runtime speaks, empty or "exec" for a
+	// subprocess. Args is what an ACP runtime is invoked with.
+	Protocol string
+	Args     []string
 }
 
 type ProbeResult struct {
@@ -36,9 +41,10 @@ func (c *Config) DiagnoseRuntime(name string) DiagnosticResult {
 	}
 
 	result := DiagnosticResult{
-		Runtime: name,
-		Command: rt.Command,
-		Models:  rt.Models,
+		Runtime:  name,
+		Command:  rt.Command,
+		Models:   rt.Models,
+		Protocol: rt.Protocol,
 	}
 
 	path, err := exec.LookPath(rt.Command)
@@ -49,6 +55,16 @@ func (c *Config) DiagnoseRuntime(name string) DiagnosticResult {
 	}
 	result.Exists = true
 	result.CommandPath = path
+
+	// An ACP runtime carries no prompt on its command line — the prompt travels
+	// over the protocol — so the flag checks below do not apply to it. Its args
+	// are passed verbatim, and whether it actually speaks ACP is a question only
+	// a handshake can answer.
+	if rt.Protocol == ProtocolACP {
+		result.ArgsValid = true
+		result.Args = rt.Args
+		return result
+	}
 
 	var args []string
 	for _, p := range rt.Positional {
@@ -79,6 +95,14 @@ func (c *Config) ProbeRuntime(ctx context.Context, name string) ProbeResult {
 	rt, ok := c.Runtimes[name]
 	if !ok {
 		return ProbeResult{Error: "runtime not found"}
+	}
+
+	// Sending a text prompt to an ACP agent is not a probe: it reads JSON-RPC
+	// on stdin and would sit there until the timeout. Establishing whether an
+	// ACP runtime works means completing a handshake, which lives in the
+	// transport rather than here.
+	if rt.Protocol == ProtocolACP {
+		return ProbeResult{Error: "acp runtime: probe via the transport, not a text prompt"}
 	}
 
 	probePrompt := "respond with exactly: BATON_PROBE_OK"

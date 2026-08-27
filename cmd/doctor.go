@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/yosephbernandus/baton/internal/acp"
 	"github.com/yosephbernandus/baton/internal/config"
+	"github.com/yosephbernandus/baton/internal/transport"
 )
 
 func NewDoctorCmd() *cobra.Command {
@@ -56,24 +58,36 @@ func runDoctor(probe bool) error {
 		}
 
 		modelCount := len(diag.Models)
-		fmt.Printf("  ✓ %-15s %-35s %d model(s)\n", name, diag.CommandPath, modelCount)
+		detail := fmt.Sprintf("%d model(s)", modelCount)
+		if diag.Protocol == config.ProtocolACP {
+			// An ACP runtime's models come from the agent, not from config, so
+			// counting the configured ones would report zero for a working one.
+			detail = "acp"
+		}
+		fmt.Printf("  ✓ %-15s %-35s %s\n", name, diag.CommandPath, detail)
 
-		if modelCount == 0 {
+		if modelCount == 0 && diag.Protocol != config.ProtocolACP {
 			fmt.Printf("    ⚠ no models configured\n")
 		}
 
 		if probe {
 			fmt.Printf("    probing... ")
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			pr := cfg.ProbeRuntime(ctx, name)
-			cancel()
-
-			if pr.Error != "" {
-				fmt.Printf("✗ %s\n", pr.Error)
-				anyFailed = true
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			if diag.Protocol == config.ProtocolACP {
+				if err := probeACP(ctx, cfg, name); err != nil {
+					fmt.Printf("✗ %v\n", err)
+					anyFailed = true
+				}
 			} else {
-				fmt.Printf("✓ responded in %s\n", pr.Duration.Round(100*time.Millisecond))
+				pr := cfg.ProbeRuntime(ctx, name)
+				if pr.Error != "" {
+					fmt.Printf("✗ %s\n", pr.Error)
+					anyFailed = true
+				} else {
+					fmt.Printf("✓ responded in %s\n", pr.Duration.Round(100*time.Millisecond))
+				}
 			}
+			cancel()
 		}
 	}
 
@@ -81,5 +95,24 @@ func runDoctor(probe bool) error {
 		return exitError(2, "some runtimes failed checks")
 	}
 
+	return nil
+}
+
+// probeACP establishes whether an ACP runtime works by doing what baton does:
+// a handshake. That is also the only way to learn what the agent can enforce,
+// since capabilities come from the agent rather than from config.
+func probeACP(ctx context.Context, cfg *config.Config, name string) error {
+	start := time.Now()
+	caps, err := acp.New(cfg, func(string, ...any) {}).Probe(ctx, name)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("✓ handshake in %s\n", time.Since(start).Round(100*time.Millisecond))
+	fmt.Printf("      tool restriction: %s\n", caps.ToolRestriction)
+	fmt.Printf("      model select: %v   usage: %v   file locations: %v\n",
+		caps.ModelSelect, caps.Usage, caps.FileLocations)
+	if caps.ToolRestriction == transport.RestrictNone {
+		fmt.Printf("      ⚠ this agent cannot restrict tools, so role boundaries are prompt guidance only\n")
+	}
 	return nil
 }
