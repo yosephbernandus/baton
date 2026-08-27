@@ -1,5 +1,7 @@
 package phase
 
+import "sort"
+
 const (
 	ComplexityTrivial = "TRIVIAL"
 	ComplexitySmall   = "SMALL"
@@ -42,6 +44,27 @@ func DefaultPhases() []Phase {
 		{15, "test_quality", RoleReviewer, "test_quality", []string{ComplexityTrivial}},
 		{16, "completion", RoleLead, "completion", nil},
 	}
+}
+
+// ActiveRoles returns the roles that will actually run at a complexity, sorted.
+//
+// Complexity skips phases, and skipped phases take their roles with them: a
+// TRIVIAL run is lead and developer only. Reporting on a role that cannot run
+// is noise at best, and at worst tells someone to fix a gap that will never be
+// reached.
+func ActiveRoles(complexity string) []string {
+	seen := make(map[string]bool)
+	for _, p := range ActivePhases(DefaultPhases(), complexity) {
+		if p.Role != "" {
+			seen[p.Role] = true
+		}
+	}
+	roles := make([]string, 0, len(seen))
+	for r := range seen {
+		roles = append(roles, r)
+	}
+	sort.Strings(roles)
+	return roles
 }
 
 func ActivePhases(phases []Phase, complexity string) []Phase {

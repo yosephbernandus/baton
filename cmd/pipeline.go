@@ -17,7 +17,6 @@ import (
 	"github.com/yosephbernandus/baton/internal/gateway"
 	gitpkg "github.com/yosephbernandus/baton/internal/git"
 	"github.com/yosephbernandus/baton/internal/phase"
-	"github.com/yosephbernandus/baton/internal/role"
 	"github.com/yosephbernandus/baton/internal/session"
 	"github.com/yosephbernandus/baton/internal/spec"
 	"github.com/yosephbernandus/baton/internal/task"
@@ -74,8 +73,11 @@ func newPipelineRunCmd() *cobra.Command {
 			}
 
 			defaultRT, _ := cfg.ResolveRuntime("", "")
+			// Only roles the complexity actually reaches. A TRIVIAL run is lead
+			// and developer, so reporting a capability gap for the tester role
+			// would flag something that cannot happen on this run.
 			roleRuntimes := map[string]string{}
-			for _, roleName := range role.Names() {
+			for _, roleName := range phase.ActiveRoles(complexity) {
 				rt := defaultRT
 				if rm, ok := cfg.RoleModels[roleName]; ok && rm.Runtime != "" {
 					rt = rm.Runtime
