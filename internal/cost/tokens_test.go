@@ -203,3 +203,28 @@ func TestSummarySeparatesMeasuredFromInferred(t *testing.T) {
 		t.Errorf("CacheRate=%v, want 0 when nothing was cached", rate)
 	}
 }
+
+// A workload can be almost entirely cached — a measured pipeline run came back
+// 98% cached — so an unknown model's fallback must price cached reads as cached,
+// not as fresh input.
+func TestUnknownModelPricesCachedReadsAsCached(t *testing.T) {
+	rate, known := RateFor("some-model-nobody-configured")
+	if known {
+		t.Fatal("expected the model to be unknown")
+	}
+	if rate.CachedPerM <= 0 {
+		t.Fatalf("default rate=%+v, want a cached rate below the input rate", rate)
+	}
+	if rate.CachedPerM >= rate.InputPerM {
+		t.Errorf("cached rate %v, want it below the input rate %v", rate.CachedPerM, rate.InputPerM)
+	}
+
+	// The realistic shape: a little fresh input, a lot of cache.
+	u := Usage{InputTokens: 213, CachedReadTokens: 9408, OutputTokens: 253}
+	got := EstimateFromTokens("some-model-nobody-configured", u)
+	asFresh := EstimateFromTokens("some-model-nobody-configured",
+		Usage{InputTokens: u.InputTokens + u.CachedReadTokens, OutputTokens: u.OutputTokens})
+	if got >= asFresh {
+		t.Errorf("cached-heavy turn cost %v, want less than %v if it were all fresh", got, asFresh)
+	}
+}

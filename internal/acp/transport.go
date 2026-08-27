@@ -138,11 +138,12 @@ func (t *Transport) Execute(ctx context.Context, req transport.Request) (*transp
 
 	events, output := sess.snapshot()
 	result := &transport.Result{
-		Status:   statusFor(resp.StopReason),
-		Events:   events,
-		Output:   output,
-		Usage:    convertUsage(resp.Usage),
-		Duration: time.Since(start),
+		Status:         statusFor(resp.StopReason),
+		EffectiveModel: sess.effectiveModel,
+		Events:         events,
+		Output:         output,
+		Usage:          convertUsage(resp.Usage),
+		Duration:       time.Since(start),
 	}
 	if result.Status != "completed" {
 		result.ExitCode = 1
@@ -292,6 +293,7 @@ func (t *Transport) handshake(
 	req transport.Request,
 ) (transport.Caps, error) {
 	caps := transport.Caps{Probed: true, ToolRestriction: transport.RestrictNone}
+	rt := t.cfg.Runtimes[req.RuntimeName]
 
 	var initResp initializeResponse
 	err := conn.Call(ctx, methodInitialize, initializeRequest{
@@ -333,6 +335,10 @@ func (t *Transport) handshake(
 
 	modelOpt, hasModelOpt := findOption(newResp.ConfigOptions, "model")
 	caps.ModelSelect = hasModelOpt
+	if hasModelOpt {
+		// What the agent is actually on, before baton asks for anything.
+		sess.effectiveModel = modelOpt.CurrentValue
+	}
 
 	modeOpt, hasModeOpt := findOption(newResp.ConfigOptions, "mode")
 	if hasModeOpt || newResp.Modes != nil {
@@ -341,8 +347,8 @@ func (t *Transport) handshake(
 		caps.ToolRestriction = transport.RestrictCoarse
 	}
 
-	if req.Model != "" && caps.ModelSelect {
-		if err := t.selectModel(ctx, conn, sess.sessionID, req.Model, modelOpt); err != nil {
+	if caps.ModelSelect && rt.ModelSelected(req.Model) {
+		if err := t.selectModel(ctx, conn, sess, req.Model, modelOpt); err != nil {
 			// A model baton could not select is worth reporting, not worth
 			// failing the turn over: the agent still has a working default.
 			t.log("acp: %v", err)
@@ -365,15 +371,20 @@ func (t *Transport) handshake(
 // from a different protocol revision, and inventing it here against the schema
 // baton pins would be a call no v1 agent answers.
 func (t *Transport) selectModel(
-	ctx context.Context, conn *Conn, sessionID, model string, opt configOption,
+	ctx context.Context, conn *Conn, sess *session, model string, opt configOption,
 ) error {
+	sessionID := sess.sessionID
 	value, ok := matchChoice(opt.Options, model)
 	if !ok {
 		return fmt.Errorf("model %q not offered by the agent, keeping %q", model, opt.CurrentValue)
 	}
-	return conn.Call(ctx, methodSetConfigOption, setConfigOptionRequest{
+	if err := conn.Call(ctx, methodSetConfigOption, setConfigOptionRequest{
 		SessionID: sessionID, ConfigID: "model", Value: value,
-	}, nil)
+	}, nil); err != nil {
+		return err
+	}
+	sess.effectiveModel = value
+	return nil
 }
 
 // selectReadOnlyMode asks the agent for a mode that withholds edit tools. This

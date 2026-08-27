@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -167,5 +168,32 @@ func TestExecuteAddsNoFlagsWhenRuntimeCannotRestrict(t *testing.T) {
 	}
 	if caps := r.Capabilities("mock"); caps.ToolRestriction != transport.RestrictNone {
 		t.Errorf("ToolRestriction=%q, want %q", caps.ToolRestriction, transport.RestrictNone)
+	}
+}
+
+// "auto" is baton's sentinel for "let the runtime choose", so it must not reach
+// the command line as a model name.
+func TestBuildArgsOmitsModelFlagForAuto(t *testing.T) {
+	rt := config.RuntimeConfig{Command: "x", ModelFlag: "--model", Models: []string{"sonnet"}}
+	args := BuildArgs(&rt, config.ModelAuto, "prompt", nil)
+	if slices.Contains(args, "--model") || slices.Contains(args, "auto") {
+		t.Errorf("args=%v, want no model flag", args)
+	}
+}
+
+func TestBuildArgsPassesANamedModel(t *testing.T) {
+	rt := config.RuntimeConfig{Command: "x", ModelFlag: "--model", Models: []string{"sonnet"}}
+	args := BuildArgs(&rt, "sonnet", "prompt", nil)
+	if !slices.Contains(args, "--model") || !slices.Contains(args, "sonnet") {
+		t.Errorf("args=%v, want the model flag and value", args)
+	}
+}
+
+// A runtime that declares "auto" as one of its models means it literally.
+func TestBuildArgsPassesAutoWhenTheRuntimeDeclaresIt(t *testing.T) {
+	rt := config.RuntimeConfig{Command: "x", ModelFlag: "--model", Models: []string{"auto", "sonnet"}}
+	args := BuildArgs(&rt, config.ModelAuto, "prompt", nil)
+	if !slices.Contains(args, "auto") {
+		t.Errorf("args=%v, want auto passed through", args)
 	}
 }

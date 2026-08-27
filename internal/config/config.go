@@ -237,6 +237,33 @@ func (c *Config) RuntimeAvailable(name string) bool {
 	return err == nil
 }
 
+// ModelAuto is baton's sentinel for "let the runtime choose". `baton setup`
+// offers it by name, so it reaches transports as an ordinary model value and
+// must not be passed on as one: no agent has a model called "auto", and sending
+// it either errors or silently selects nothing.
+const ModelAuto = "auto"
+
+// ModelSelected reports whether a model value names a model a transport should
+// actually select.
+//
+// Empty and "auto" both mean "leave the runtime on its default" — unless the
+// runtime declares "auto" among its models, in which case it is a real name for
+// that runtime and is passed through.
+func (rt *RuntimeConfig) ModelSelected(model string) bool {
+	if model == "" {
+		return false
+	}
+	if model != ModelAuto {
+		return true
+	}
+	for _, m := range rt.Models {
+		if m == ModelAuto {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Config) ResolveRuntime(name, model string) (string, string) {
 	if name == "" {
 		name = c.Defaults.Runtime
