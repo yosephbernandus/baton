@@ -128,9 +128,13 @@ func probeACP(ctx context.Context, cfg *config.Config, name string) error {
 // These are third-party packages installed on the user's machine, not
 // dependencies of baton. The hint says what to install and stops there.
 var acpAdapterKnown = map[string]string{
-	"claude-code-acp": "npm i -g @zed-industries/claude-code-acp",
-	"codex-acp":       "npm i -g @zed-industries/codex-acp",
-	"pi-acp":          "npm i -g pi-acp",
+	// nixpkgs renamed claude-code-acp to claude-agent-acp, so both binary names
+	// are in use depending on where it came from.
+	"claude-code-acp":  "nix shell nixpkgs#claude-agent-acp, or npm i -g @zed-industries/claude-code-acp",
+	"claude-agent-acp": "nix shell nixpkgs#claude-agent-acp, or npm i -g @zed-industries/claude-code-acp",
+	"codex-acp":        "nix shell nixpkgs#codex-acp, or npm i -g @zed-industries/codex-acp",
+	// Not packaged in nixpkgs.
+	"pi-acp": "npm i -g pi-acp",
 }
 
 func acpAdapterHint(command string) string {

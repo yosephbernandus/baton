@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -572,5 +573,106 @@ func TestFailureQuotesTheAgentNotItsReasoning(t *testing.T) {
 	}
 	if strings.Contains(res.ErrorDetail, "maybe I should retry") {
 		t.Errorf("detail=%q, want reasoning excluded", res.ErrorDetail)
+	}
+}
+
+// A mode option with no read-only value enforces nothing. codex-acp offers one,
+// and reporting coarse for it told the gateway a reviewer's boundary was covered
+// when nothing would enforce it. The capability is the value, not the option.
+func TestCoarseRestrictionNeedsAReadOnlyValue(t *testing.T) {
+	withPlan := configOption{ID: "mode", Options: []configOptionChoice{
+		{Value: "build", Name: "build"},
+		{Value: "plan", Name: "plan"},
+	}}
+	if !hasReadOnlyMode(withPlan, true, nil) {
+		t.Error("a mode option offering plan must count as coarse restriction")
+	}
+
+	withoutPlan := configOption{ID: "mode", Options: []configOptionChoice{
+		{Value: "default", Name: "default"},
+		{Value: "yolo", Name: "yolo"},
+	}}
+	if hasReadOnlyMode(withoutPlan, true, nil) {
+		t.Error("a mode option with no read-only value must not count as restriction")
+	}
+
+	if hasReadOnlyMode(configOption{}, false, nil) {
+		t.Error("no mode option at all must not count as restriction")
+	}
+}
+
+// The dedicated modes mechanism is checked the same way.
+func TestCoarseRestrictionViaModesList(t *testing.T) {
+	if !hasReadOnlyMode(configOption{}, false, &modeState{
+		AvailableModes: []modeInfo{{ModeID: "build"}, {ModeID: "plan"}},
+	}) {
+		t.Error("a modes list offering plan must count as coarse restriction")
+	}
+	if hasReadOnlyMode(configOption{}, false, &modeState{
+		AvailableModes: []modeInfo{{ModeID: "build"}},
+	}) {
+		t.Error("a modes list with no read-only mode must not count as restriction")
+	}
+}
+
+// A protocol error is often uninformative on its own. codex-acp answered a
+// prompt with "Internal error" while its stderr explained the adapter was too
+// old for the account's model — the only sentence that told anyone what to do.
+func TestFailureCarriesTheAgentsDiagnostics(t *testing.T) {
+	dir := acpGitRepo(t)
+
+	agent := filepath.Join(dir, "noisy-agent.sh")
+	script := `#!/usr/bin/env bash
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentInfo":{"name":"noisy","version":"0"}}}\n' "$id" ;;
+    *'"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s1"}}\n' "$id" ;;
+    *'"session/prompt"'*)
+      echo "ERROR the model requires a newer version of the adapter" >&2
+      sleep 0.3
+      printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"Internal error"}}\n' "$id" ;;
+  esac
+done
+`
+	if err := os.WriteFile(agent, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	res := runFake(t, agent)
+	if res.Status != "failed" {
+		t.Fatalf("status=%q, want failed", res.Status)
+	}
+	if !strings.Contains(res.ErrorDetail, "Internal error") {
+		t.Errorf("detail=%q, want the protocol error kept", res.ErrorDetail)
+	}
+	if !strings.Contains(res.ErrorDetail, "newer version of the adapter") {
+		t.Errorf("detail=%q, want the agent's own diagnostic attached", res.ErrorDetail)
+	}
+}
+
+// Only the tail is kept, so a chatty agent cannot bury the failure in its logs.
+func TestOnlyTheLastDiagnosticsAreKept(t *testing.T) {
+	s := newSession(nil, nil, nil)
+	for i := 0; i < stderrTailLines*3; i++ {
+		s.recordStderr(fmt.Sprintf("line %d", i))
+	}
+	tail := s.lastStderr()
+	if len(tail) != stderrTailLines {
+		t.Fatalf("kept %d lines, want %d", len(tail), stderrTailLines)
+	}
+	if tail[len(tail)-1] != fmt.Sprintf("line %d", stderrTailLines*3-1) {
+		t.Errorf("last=%q, want the most recent line", tail[len(tail)-1])
+	}
+}
+
+func TestBlankDiagnosticsAreNotKept(t *testing.T) {
+	s := newSession(nil, nil, nil)
+	s.recordStderr("   ")
+	s.recordStderr("")
+	if tail := s.lastStderr(); len(tail) != 0 {
+		t.Errorf("tail=%v, want empty", tail)
 	}
 }

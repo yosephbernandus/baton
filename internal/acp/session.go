@@ -44,6 +44,12 @@ type session struct {
 	msgBuf     string
 	thoughtBuf string
 
+	// stderrTail keeps the agent's last diagnostic lines. Agents put their real
+	// explanations there — a JSON-RPC error carries "Internal error" while
+	// stderr says which model the adapter is too old for — so a failure that
+	// has nothing better to report quotes these.
+	stderrTail []string
+
 	log func(string, ...any)
 }
 
@@ -243,6 +249,29 @@ func (s *session) flush() {
 		s.recordLine(s.thoughtBuf, "[thinking] ", false)
 		s.thoughtBuf = ""
 	}
+}
+
+const stderrTailLines = 5
+
+func (s *session) recordStderr(line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stderrTail = append(s.stderrTail, line)
+	if len(s.stderrTail) > stderrTailLines {
+		s.stderrTail = s.stderrTail[len(s.stderrTail)-stderrTailLines:]
+	}
+}
+
+func (s *session) lastStderr() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.stderrTail))
+	copy(out, s.stderrTail)
+	return out
 }
 
 func (s *session) recordEvent(ev proto.Event) {

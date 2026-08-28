@@ -280,11 +280,11 @@ func (t *Transport) spawn(ctx context.Context, runtimeName string) (*process, er
 		return nil, fmt.Errorf("starting %s: %w", rt.Command, err)
 	}
 
-	go drainStderr(stderr, t.log)
-
 	sess := newSession(nil, nil, t.log)
 	conn := NewConn(stdout, stdin, sess, t.log)
 	sess.conn = conn
+
+	go drainStderr(stderr, t.log, sess)
 	go func() { _ = conn.Serve(runCtx) }()
 
 	return &process{
@@ -356,10 +356,13 @@ func (t *Transport) handshake(
 		sess.effectiveModel = modelOpt.CurrentValue
 	}
 
+	// A mode toggle can withhold edit tools but cannot name individual ones, so
+	// it is coarse restriction — but only if a read-only mode actually exists.
+	// codex-acp offers a mode option with no read-only value, and reporting
+	// coarse for it told the gateway a reviewer's boundary was covered when
+	// nothing would enforce it. The capability is the value, not the option.
 	modeOpt, hasModeOpt := findOption(newResp.ConfigOptions, "mode")
-	if hasModeOpt || newResp.Modes != nil {
-		// A mode toggle can withhold edit tools but cannot name individual
-		// ones. Permission requests are exact, but only for agents that ask.
+	if hasReadOnlyMode(modeOpt, hasModeOpt, newResp.Modes) {
 		caps.ToolRestriction = transport.RestrictCoarse
 	}
 
@@ -403,6 +406,27 @@ func (t *Transport) selectModel(
 	return nil
 }
 
+// readOnlyModeName is the mode agents use for "no edit tools".
+const readOnlyModeName = "plan"
+
+// hasReadOnlyMode reports whether the agent offers a mode that withholds
+// editing, through either mechanism.
+func hasReadOnlyMode(opt configOption, hasOpt bool, modes *modeState) bool {
+	if hasOpt {
+		if _, ok := matchChoice(opt.Options, readOnlyModeName); ok {
+			return true
+		}
+	}
+	if modes != nil {
+		for _, m := range modes.AvailableModes {
+			if strings.EqualFold(m.ModeID, readOnlyModeName) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // selectReadOnlyMode asks the agent for a mode that withholds edit tools. This
 // is the coarse half of role enforcement: it cannot name tools, but it is what
 // keeps a reviewer from writing when the agent never asks permission.
@@ -410,7 +434,7 @@ func (t *Transport) selectReadOnlyMode(
 	ctx context.Context, conn *Conn, sessionID string,
 	opt configOption, hasOpt bool, modes *modeState,
 ) error {
-	const wanted = "plan"
+	const wanted = readOnlyModeName
 
 	if hasOpt {
 		value, ok := matchChoice(opt.Options, wanted)
@@ -449,6 +473,14 @@ func (t *Transport) failure(
 		filesChanged = mergeFilesChanged(gitpkg.DetectChanges(beforeSnap, afterSnap), events)
 	}
 
+	detail := err.Error()
+	// A protocol error is often uninformative on its own: "Internal error" is
+	// all a JSON-RPC failure carries, while the agent's stderr says the adapter
+	// is too old for the account's model. Attach what it actually said.
+	if tail := sess.lastStderr(); len(tail) > 0 {
+		detail = fmt.Sprintf("%s — agent reported: %s", detail, strings.Join(tail, " | "))
+	}
+
 	return &transport.Result{
 		Status:       "failed",
 		ExitCode:     1,
@@ -456,7 +488,7 @@ func (t *Transport) failure(
 		Output:       output,
 		FilesChanged: filesChanged,
 		Duration:     time.Since(start),
-		ErrorDetail:  err.Error(),
+		ErrorDetail:  detail,
 	}, nil
 }
 
@@ -596,7 +628,7 @@ func convertUsage(u *usageInfo) *proto.Usage {
 	}
 }
 
-func drainStderr(r io.Reader, log func(string, ...any)) {
+func drainStderr(r io.Reader, log func(string, ...any), sink *session) {
 	buf := make([]byte, 4096)
 	for {
 		n, err := r.Read(buf)
@@ -604,6 +636,9 @@ func drainStderr(r io.Reader, log func(string, ...any)) {
 			for _, line := range strings.Split(strings.TrimRight(string(buf[:n]), "\n"), "\n") {
 				if line != "" {
 					log("acp[stderr]: %s", line)
+					if sink != nil {
+						sink.recordStderr(line)
+					}
 				}
 			}
 		}
