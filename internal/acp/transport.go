@@ -137,8 +137,24 @@ func (t *Transport) Execute(ctx context.Context, req transport.Request) (*transp
 	sess.flush()
 
 	events, output := sess.snapshot()
+	status := statusFor(resp.StopReason)
+
+	// end_turn means the agent stopped talking, not that it did the work. An
+	// agent that fails for its own reasons — an expired token, a refused
+	// request — reports that as ordinary prose and ends the turn cleanly, and
+	// the phase machine treats a completed turn with no completion marker as a
+	// finished phase. A whole pipeline once reported success while an agent had
+	// only said its auth had expired.
+	//
+	// Events are what baton observed the agent actually do: a BATON: marker or
+	// a tool call. None of either means nothing happened, whatever the stop
+	// reason said.
+	if status == "completed" && len(events) == 0 {
+		status = "failed"
+	}
+
 	result := &transport.Result{
-		Status:         statusFor(resp.StopReason),
+		Status:         status,
 		EffectiveModel: sess.effectiveModel,
 		Events:         events,
 		Output:         output,
@@ -147,7 +163,7 @@ func (t *Transport) Execute(ctx context.Context, req transport.Request) (*transp
 	}
 	if result.Status != "completed" {
 		result.ExitCode = 1
-		result.ErrorDetail = fmt.Sprintf("agent stopped: %s", resp.StopReason)
+		result.ErrorDetail = describeStop(resp.StopReason, events, output)
 	}
 	afterSnap, _ := gitpkg.TakeSnapshot()
 	result.FilesChanged = mergeFilesChanged(gitpkg.DetectChanges(beforeSnap, afterSnap), events)
@@ -512,6 +528,37 @@ func isMutatingKind(kind string) bool {
 		return true
 	}
 	return false
+}
+
+// describeStop explains why a turn is not a success.
+//
+// When the agent ended cleanly but did nothing, its own last words are the
+// useful part — that is where "your authentication token has been invalidated"
+// lives. Reporting only the stop reason would hide it behind "agent stopped:
+// end_turn".
+func describeStop(stopReason string, events []proto.Event, output []string) string {
+	if stopReason == stopEndTurn && len(events) == 0 {
+		if last := lastMeaningfulLine(output); last != "" {
+			return fmt.Sprintf("agent ended the turn without doing anything: %s", last)
+		}
+		return "agent ended the turn without doing anything, and said nothing"
+	}
+	return fmt.Sprintf("agent stopped: %s", stopReason)
+}
+
+// lastMeaningfulLine returns the agent's final message line, skipping its
+// reasoning and tool chatter, which are baton's annotations rather than the
+// agent's answer.
+func lastMeaningfulLine(output []string) string {
+	for i := len(output) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(output[i])
+		if line == "" || strings.HasPrefix(line, "[thinking] ") ||
+			strings.HasPrefix(line, "[tool] ") || strings.HasPrefix(line, "[plan] ") {
+			continue
+		}
+		return line
+	}
+	return ""
 }
 
 // filesTouched collects the paths that mutating tool calls reported.

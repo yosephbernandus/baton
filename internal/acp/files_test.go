@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -385,7 +386,7 @@ while IFS= read -r line; do
     *'"session/new"'*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s1","configOptions":[{"id":"model","category":"model","type":"select","currentValue":"vendor/actual-model","options":[{"value":"vendor/actual-model","name":"Actual"}]}]}}\n' "$id" ;;
     *'"session/prompt"'*)
-      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"BATON:C:setup:done\n"}}}}\n'
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"BATON:C:setup:done\\n"}}}}\n'
       printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
   esac
 done
@@ -453,5 +454,123 @@ done
 	}
 	if res.EffectiveModel != "" {
 		t.Errorf("EffectiveModel=%q, want empty when the agent exposes no model option", res.EffectiveModel)
+	}
+}
+
+// fakeAgent writes a shell script that speaks enough ACP to answer initialize,
+// session/new and session/prompt, replying to the prompt with promptReply.
+func fakeAgent(t *testing.T, dir, name, promptReply string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	script := `#!/usr/bin/env bash
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentInfo":{"name":"fake","version":"0"}}}\n' "$id" ;;
+    *'"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s1"}}\n' "$id" ;;
+    *'"session/prompt"'*)
+` + promptReply + `
+      ;;
+  esac
+done
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func runFake(t *testing.T, agent string) *transport.Result {
+	t.Helper()
+	cfg := &config.Config{Runtimes: map[string]config.RuntimeConfig{
+		"fake": {Command: agent, Protocol: config.ProtocolACP},
+	}}
+	res, err := New(cfg, func(string, ...any) {}).Execute(context.Background(), transport.Request{
+		TaskID: "t1", RuntimeName: "fake", Prompt: "do the work",
+		Liveness: transport.LivenessConfig{AbsoluteTimeout: 30 * time.Second},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	return res
+}
+
+// end_turn means the agent stopped talking, not that it did the work. An agent
+// whose auth expired reported that as ordinary prose and ended cleanly, and a
+// whole pipeline reported success — three phases "completed", no files changed,
+// no tokens spent.
+func TestCleanStopWithNoWorkIsAFailure(t *testing.T) {
+	dir := acpGitRepo(t)
+	agent := fakeAgent(t, dir, "excuse-agent.sh", `
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Your authentication token has been invalidated.\\n"}}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"`)
+
+	res := runFake(t, agent)
+	if res.Status != "failed" {
+		t.Fatalf("status=%q, want failed: the agent did nothing", res.Status)
+	}
+	if !strings.Contains(res.ErrorDetail, "authentication token") {
+		t.Errorf("detail=%q, want the agent's own explanation carried through", res.ErrorDetail)
+	}
+}
+
+// A turn that reported a marker did something, and must still pass.
+func TestCleanStopWithAMarkerSucceeds(t *testing.T) {
+	dir := acpGitRepo(t)
+	agent := fakeAgent(t, dir, "working-agent.sh", `
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"BATON:C:setup:done\\n"}}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"`)
+
+	if res := runFake(t, agent); res.Status != "completed" {
+		t.Fatalf("status=%q detail=%q, want completed", res.Status, res.ErrorDetail)
+	}
+}
+
+// A tool call is work too, even with no marker: the phase machine decides what
+// a missing marker means, and the transport must not pre-empt it.
+func TestCleanStopWithAToolCallSucceeds(t *testing.T) {
+	dir := acpGitRepo(t)
+	agent := fakeAgent(t, dir, "tool-agent.sh", `
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"tool_call","toolCallId":"c1","title":"read","kind":"read","status":"completed"}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"`)
+
+	if res := runFake(t, agent); res.Status != "completed" {
+		t.Fatalf("status=%q detail=%q, want completed", res.Status, res.ErrorDetail)
+	}
+}
+
+// An agent that ends cleanly and says nothing at all still fails, and says so
+// without pretending to quote it.
+func TestSilentCleanStopIsAFailure(t *testing.T) {
+	dir := acpGitRepo(t)
+	agent := fakeAgent(t, dir, "silent-agent.sh", `
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"`)
+
+	res := runFake(t, agent)
+	if res.Status != "failed" {
+		t.Fatalf("status=%q, want failed", res.Status)
+	}
+	if !strings.Contains(res.ErrorDetail, "said nothing") {
+		t.Errorf("detail=%q, want it to report that the agent said nothing", res.ErrorDetail)
+	}
+}
+
+// Reasoning and baton's own tool annotations are not the agent's answer, so the
+// explanation must skip them and reach the real last line.
+func TestFailureQuotesTheAgentNotItsReasoning(t *testing.T) {
+	dir := acpGitRepo(t)
+	agent := fakeAgent(t, dir, "thinky-agent.sh", `
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"quota exceeded\\n"}}}}\n'
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"maybe I should retry\\n"}}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"`)
+
+	res := runFake(t, agent)
+	if !strings.Contains(res.ErrorDetail, "quota exceeded") {
+		t.Errorf("detail=%q, want the agent's message", res.ErrorDetail)
+	}
+	if strings.Contains(res.ErrorDetail, "maybe I should retry") {
+		t.Errorf("detail=%q, want reasoning excluded", res.ErrorDetail)
 	}
 }

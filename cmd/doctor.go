@@ -47,6 +47,9 @@ func runDoctor(probe bool) error {
 
 		if !diag.Exists {
 			fmt.Printf("  ✗ %-15s command not found: %s\n", name, diag.Command)
+			if hint := acpAdapterHint(diag.Command); hint != "" {
+				fmt.Printf("    %s\n", hint)
+			}
 			anyFailed = true
 			continue
 		}
@@ -115,4 +118,25 @@ func probeACP(ctx context.Context, cfg *config.Config, name string) error {
 		fmt.Printf("      ⚠ this agent cannot restrict tools, so role boundaries are prompt guidance only\n")
 	}
 	return nil
+}
+
+// acpAdapterKnown maps the ACP adapter binaries baton's example config names to
+// where they come from. Most agents do not speak ACP themselves and need one of
+// these; telling someone the command is missing without saying what provides it
+// leaves them to guess.
+//
+// These are third-party packages installed on the user's machine, not
+// dependencies of baton. The hint says what to install and stops there.
+var acpAdapterKnown = map[string]string{
+	"claude-code-acp": "npm i -g @zed-industries/claude-code-acp",
+	"codex-acp":       "npm i -g @zed-industries/codex-acp",
+	"pi-acp":          "npm i -g pi-acp",
+}
+
+func acpAdapterHint(command string) string {
+	install, ok := acpAdapterKnown[command]
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("this is an ACP adapter, provided by: %s", install)
 }

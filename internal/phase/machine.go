@@ -767,10 +767,15 @@ func (p *Pipeline) executePhaseWithRetries(
 			}
 			notes := extractNotes(runResult.Events)
 			lastCrashed = runResult.Crashed
-			_ = scratchpad.AppendAttempt(attempt, notes,
-				fmt.Sprintf("worker exited with status %s, no completion promise", runResult.Status))
-			lastFailReason = fmt.Sprintf("phase %d (%s): worker exited with status %s, no completion promise",
-				ph.ID, ph.Name, runResult.Status)
+			// The transport often knows why, and its explanation is the part
+			// worth reading: "no completion promise" describes the symptom,
+			// while the detail carries the agent's own account of the cause.
+			why := fmt.Sprintf("worker exited with status %s, no completion promise", runResult.Status)
+			if runResult.ErrorDetail != "" {
+				why = fmt.Sprintf("%s (%s)", why, runResult.ErrorDetail)
+			}
+			_ = scratchpad.AppendAttempt(attempt, notes, why)
+			lastFailReason = fmt.Sprintf("phase %d (%s): %s", ph.ID, ph.Name, why)
 			if loopDetector != nil {
 				loopDetector.Record(runResult.Output)
 				if loopDetector.IsStuck() {
