@@ -47,6 +47,41 @@ runtimes:
     #     - "quota exceeded"
     #   exit_codes: []
 
+  # --- ACP runtimes -------------------------------------------------------
+  #
+  # Two of these speak ACP natively; the rest need an adapter binary you
+  # install yourself. That adapter is a dependency on your machine, not on
+  # baton — install it deliberately, and check what you are installing.
+  #
+  #   native      opencode acp        (verified against OpenCode 1.17.16)
+  #   native      omp acp             (verified against Oh My Pi 17.0.9)
+  #   adapter     npm i -g @zed-industries/claude-code-acp   -> claude-code-acp
+  #   adapter     npm i -g @zed-industries/codex-acp         -> codex-acp
+  #   adapter     npm i -g pi-acp                            -> pi-acp
+  #
+  # Every one of them is configured the same way, because the transport does
+  # not care which agent is on the other end: a command, an optional args
+  # list, and protocol: acp. What each agent can actually enforce is
+  # discovered at handshake — run `baton doctor --probe` to see it.
+
+  omp-acp:
+    command: "omp"
+    protocol: "acp"
+    args:
+      - "acp"
+
+  # claude-code-acp:
+  #   command: "claude-code-acp"
+  #   protocol: "acp"
+  #
+  # codex-acp:
+  #   command: "codex-acp"
+  #   protocol: "acp"
+  #
+  # pi-acp:
+  #   command: "pi-acp"
+  #   protocol: "acp"
+
   # ACP transport: baton speaks Agent Client Protocol over the agent's stdio
   # instead of building a command line and scraping stdout.
   #
