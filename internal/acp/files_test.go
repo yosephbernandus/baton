@@ -66,13 +66,26 @@ func TestOnePathReportedTwoWaysIsNotDuplicated(t *testing.T) {
 	}
 }
 
-// A path outside the working tree is left as it is. Rewriting it into something
-// that looks like a repo path would misreport where the change happened.
-func TestPathOutsideTheTreeKeepsItsAbsoluteForm(t *testing.T) {
+// A path outside the working tree is not a project change. An agent writing its
+// own notes under the user's home once cost a read-only phase a retry — and git,
+// which reports nothing outside the repo, would never have flagged it, so
+// counting it made the ACP path stricter than the exec path for no reason.
+func TestPathOutsideTheTreeIsNotAProjectChange(t *testing.T) {
 	outside := filepath.Join(string(filepath.Separator), "etc", "somewhere", "x.conf")
-	got := mergeFilesChanged(nil, []proto.Event{toolEvent(outside)})
-	if len(got) != 1 || got[0] != outside {
-		t.Errorf("files=%v, want the absolute path preserved", got)
+	if got := mergeFilesChanged(nil, []proto.Event{toolEvent(outside)}); len(got) != 0 {
+		t.Errorf("files=%v, want none: the path is outside the working tree", got)
+	}
+}
+
+// The real case: an agent's own state file in the user's home directory.
+func TestAgentsOwnNotesAreNotProjectChanges(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	notes := filepath.Join(home, ".claude-personal", "plans", "project-context.md")
+	if got := mergeFilesChanged(nil, []proto.Event{toolEvent(notes)}); len(got) != 0 {
+		t.Errorf("files=%v, want none: the agent's own notes are not project work", got)
 	}
 }
 
@@ -105,15 +118,26 @@ func TestGitPathsComeFirst(t *testing.T) {
 	}
 }
 
-func TestRelativiseLeavesRelativePathsAlone(t *testing.T) {
-	if got := relativise("/repo", "internal/a.go"); got != "internal/a.go" {
-		t.Errorf("relativise=%q, want it unchanged", got)
+// A relative path is already tree-relative, which is what agents send when they
+// report one.
+func TestRelativiseTreatsRelativePathsAsInsideTheTree(t *testing.T) {
+	got, inTree := relativise("/repo", "internal/a.go")
+	if got != "internal/a.go" || !inTree {
+		t.Errorf("relativise=(%q, %v), want it unchanged and inside", got, inTree)
 	}
 }
 
-func TestRelativiseWithoutARootIsANoOp(t *testing.T) {
-	if got := relativise("", "/abs/a.go"); got != "/abs/a.go" {
-		t.Errorf("relativise=%q, want it unchanged when the root is unknown", got)
+// Without a known root nothing can be placed, so nothing is claimed as inside.
+func TestRelativiseWithoutARootClaimsNothing(t *testing.T) {
+	if _, inTree := relativise("", "/abs/a.go"); inTree {
+		t.Error("inTree=true with no root, want false")
+	}
+}
+
+// A sibling directory sharing a prefix is still outside.
+func TestSiblingDirectoryIsOutsideTheTree(t *testing.T) {
+	if _, inTree := relativise("/repo", "/repo-other/a.go"); inTree {
+		t.Error("inTree=true for a sibling directory, want false")
 	}
 }
 

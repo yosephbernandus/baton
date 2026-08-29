@@ -193,8 +193,13 @@ func mergeFilesChanged(fromGit []string, events []proto.Event) []string {
 		root = ""
 	}
 	for _, p := range filesTouched(events) {
-		rel := relativise(root, p)
-		if rel == "" || seen[rel] || !isFileChange(p) {
+		rel, inTree := relativise(root, p)
+		// Only the working tree. An agent writing its own notes under the
+		// user's home is not touching the project, and git — which reports
+		// nothing outside the repo — never flags it, so counting it made the
+		// ACP path stricter than the exec path for no principled reason. It
+		// cost a read-only phase a retry for a file the project never saw.
+		if !inTree || rel == "" || seen[rel] || !isFileChange(p) {
 			continue
 		}
 		seen[rel] = true
@@ -218,18 +223,23 @@ func isFileChange(path string) bool {
 	return !info.IsDir()
 }
 
-// relativise expresses an agent-reported path relative to the working tree.
-// A path outside the tree is left as it is: reporting it wrongly as a repo path
-// would be worse than reporting where it really is.
-func relativise(root, path string) string {
-	if root == "" || !filepath.IsAbs(path) {
-		return path
+// relativise expresses an agent-reported path relative to the working tree, and
+// reports whether it is inside it at all.
+//
+// A relative path is taken to be tree-relative already, which is what agents
+// send when they report one.
+func relativise(root, path string) (string, bool) {
+	if !filepath.IsAbs(path) {
+		return path, true
+	}
+	if root == "" {
+		return path, false
 	}
 	rel, err := filepath.Rel(root, path)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return path
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return path, false
 	}
-	return rel
+	return rel, true
 }
 
 // process is one spawned agent and the connection to it.
