@@ -120,7 +120,8 @@ func (s *session) decidePermission(p requestPermissionParams) requestPermissionR
 	name := toolName(p.ToolCall)
 
 	s.mu.Lock()
-	restricted, allowed := s.restricted, s.allowedTools[name]
+	restricted := s.restricted
+	allowed := s.permits(p.ToolCall.Kind)
 	s.mu.Unlock()
 
 	if restricted && !allowed {
@@ -143,6 +144,37 @@ func (s *session) decidePermission(p requestPermissionParams) requestPermissionR
 		return requestPermissionResponse{Outcome: permissionOutcome{Outcome: outcomeSelected, OptionID: opt}}
 	}
 	return requestPermissionResponse{Outcome: permissionOutcome{Outcome: outcomeCancelled}}
+}
+
+// permits reports whether the role's tool boundary allows a tool of this kind.
+// Callers hold s.mu.
+//
+// The decision is on kind, not on the tool's title. Titles are free text and
+// agents fill them differently: omp titles a shell call with the command it is
+// about to run, so matching a title against ["Read","Grep","Glob","Bash"] denied
+// "go vet ./..." to a role that explicitly permits Bash, and a read-only phase
+// failed three times for lack of the tools it was entitled to. Kind is defined
+// by the protocol and means the same thing everywhere.
+func (s *session) permits(kind string) bool {
+	if !s.restricted {
+		return true
+	}
+	switch kind {
+	case "read", "search":
+		return s.allowedTools["Read"] || s.allowedTools["Grep"] || s.allowedTools["Glob"]
+	case "edit", "delete", "move":
+		return s.allowedTools["Edit"] || s.allowedTools["Write"] ||
+			s.allowedTools["MultiEdit"] || s.allowedTools["NotebookEdit"]
+	case "execute":
+		return s.allowedTools["Bash"]
+	default:
+		// think, fetch, switch_mode, other, and anything added later. None of
+		// these is a boundary baton models, and denying what it cannot classify
+		// is how the title-matching bug did its damage — it broke legitimate
+		// work loudly while the gateway already reports this restriction as
+		// partial.
+		return true
+	}
 }
 
 // pickOption finds the first option whose kind matches exactly, then the first

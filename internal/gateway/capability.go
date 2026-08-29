@@ -68,15 +68,17 @@ func CheckRoleCapabilities(
 			// The boundary can be enforced exactly.
 
 		case transport.RestrictCoarse:
-			// A coarse mechanism can withhold editing but cannot name tools. It
-			// covers a read-only role and does nothing for one that permits
-			// some writes but not others.
-			if allowsEditing(tools) {
+			// A coarse mechanism is a single switch: no edits, and in practice
+			// no commands either. It expresses a role that wants neither, and
+			// nothing else — lead and reviewer are read-only about files but run
+			// commands to verify, so the transport declines to apply it there
+			// and their boundary rests on permission requests instead.
+			if !role.CoarseRestrictionFits(tools) {
 				findings = append(findings, Finding{
 					Check:    "role_capability",
 					Severity: SeverityWarn,
 					Message: fmt.Sprintf(
-						"role %q on runtime %q: only coarse tool restriction is available, so the boundary (%v) is enforced only where the agent asks permission",
+						"role %q on runtime %q: only coarse tool restriction is available and it does not fit this boundary (%v), so it is enforced only where the agent asks permission",
 						roleName, runtimeName, tools),
 				})
 			}
@@ -98,16 +100,4 @@ func CheckRoleCapabilities(
 		}
 	}
 	return findings
-}
-
-// allowsEditing reports whether a tool list includes anything that can change
-// files.
-func allowsEditing(tools []string) bool {
-	for _, t := range tools {
-		switch t {
-		case "Edit", "Write", "MultiEdit", "NotebookEdit":
-			return true
-		}
-	}
-	return false
 }

@@ -179,10 +179,14 @@ func TestUnknownUpdateVariantIsIgnored(t *testing.T) {
 }
 
 func permissionFor(tool string, allowed []string, opts []permissionOption) requestPermissionResponse {
+	return permissionForKind(tool, "edit", allowed, opts)
+}
+
+func permissionForKind(title, kind string, allowed []string, opts []permissionOption) requestPermissionResponse {
 	s := newSession(nil, allowed, nil)
 	return s.decidePermission(requestPermissionParams{
 		SessionID: "s1",
-		ToolCall:  sessionUpdate{Title: tool, Kind: "edit"},
+		ToolCall:  sessionUpdate{Title: title, Kind: kind},
 		Options:   opts,
 	})
 }
@@ -194,7 +198,7 @@ var standardOptions = []permissionOption{
 }
 
 func TestPermissionAllowsToolInsideBoundary(t *testing.T) {
-	got := permissionFor("Read", []string{"Read", "Grep"}, standardOptions)
+	got := permissionForKind("Read", "read", []string{"Read", "Grep"}, standardOptions)
 	if got.Outcome.Outcome != outcomeSelected || got.Outcome.OptionID != "allow_once" {
 		t.Errorf("outcome=%+v, want allow_once selected", got.Outcome)
 	}
@@ -223,7 +227,7 @@ func TestPermissionPicksByKindNotPosition(t *testing.T) {
 		{OptionID: "no", Kind: "reject_once", Name: "Deny"},
 		{OptionID: "yes", Kind: "allow_once", Name: "Allow"},
 	}
-	if got := permissionFor("Read", []string{"Read"}, reversed); got.Outcome.OptionID != "yes" {
+	if got := permissionForKind("Read", "read", []string{"Read"}, reversed); got.Outcome.OptionID != "yes" {
 		t.Errorf("optionId=%q, want the allow option regardless of order", got.Outcome.OptionID)
 	}
 	if got := permissionFor("Write", []string{"Read"}, reversed); got.Outcome.OptionID != "no" {
@@ -244,7 +248,7 @@ func TestPermissionCancelsWhenNoRefusalOffered(t *testing.T) {
 func TestPermissionDenialIsRecordedAsANote(t *testing.T) {
 	s := newSession(nil, []string{"Read"}, nil)
 	s.decidePermission(requestPermissionParams{
-		ToolCall: sessionUpdate{Title: "Write"},
+		ToolCall: sessionUpdate{Title: "Write", Kind: "edit"},
 		Options:  standardOptions,
 	})
 	events, _ := s.snapshot()
@@ -346,5 +350,70 @@ func TestFlushIsIdempotent(t *testing.T) {
 	}
 	if len(output) != 1 {
 		t.Errorf("output=%q, want one line", output)
+	}
+}
+
+// Titles are free text and agents fill them differently. omp titles a shell call
+// with the command it is about to run, so matching titles against the role's
+// tool names denied "go vet ./..." to a role that explicitly permits Bash — and
+// a read-only phase failed three times for want of the tools it was entitled to.
+func TestPermissionJudgesTheKindNotTheTitle(t *testing.T) {
+	// lead: Read, Grep, Glob, Bash — a shell command titled with the command.
+	for _, title := range []string{
+		"go vet ./...",
+		"go run .",
+		"git diff --name-only && git diff -- greet.go",
+	} {
+		got := permissionForKind(title, "execute", []string{"Read", "Grep", "Glob", "Bash"}, standardOptions)
+		if got.Outcome.OptionID != "allow_once" {
+			t.Errorf("%q denied; the role permits Bash and the kind is execute", title)
+		}
+	}
+}
+
+// test_lead permits Read, Grep, Glob and no Bash, so a command is still refused.
+func TestPermissionDeniesExecuteWithoutBash(t *testing.T) {
+	got := permissionForKind("go test ./...", "execute", []string{"Read", "Grep", "Glob"}, standardOptions)
+	if got.Outcome.OptionID != "reject_once" {
+		t.Errorf("outcome=%+v, want a refusal: the role has no Bash", got.Outcome)
+	}
+}
+
+func TestPermissionMapsToolKindsToRoleTools(t *testing.T) {
+	readOnly := []string{"Read", "Grep", "Glob"}
+	writer := []string{"Read", "Edit", "Write", "Bash"}
+
+	cases := []struct {
+		kind    string
+		allowed []string
+		want    bool
+	}{
+		{"read", readOnly, true},
+		{"search", readOnly, true},
+		{"edit", readOnly, false},
+		{"delete", readOnly, false},
+		{"move", readOnly, false},
+		{"execute", readOnly, false},
+		{"edit", writer, true},
+		{"execute", writer, true},
+	}
+	for _, c := range cases {
+		got := permissionForKind("t", c.kind, c.allowed, standardOptions)
+		allowed := got.Outcome.OptionID == "allow_once"
+		if allowed != c.want {
+			t.Errorf("kind %q with %v: allowed=%v, want %v", c.kind, c.allowed, allowed, c.want)
+		}
+	}
+}
+
+// A kind baton does not model is allowed. Denying what it cannot classify is how
+// the title-matching bug did its damage, and the gateway already reports this
+// restriction as partial.
+func TestPermissionAllowsKindsItDoesNotModel(t *testing.T) {
+	for _, kind := range []string{"think", "fetch", "switch_mode", "other", "", "invented_later"} {
+		got := permissionForKind("t", kind, []string{"Read"}, standardOptions)
+		if got.Outcome.OptionID != "allow_once" {
+			t.Errorf("kind %q denied; baton models no boundary for it", kind)
+		}
 	}
 }

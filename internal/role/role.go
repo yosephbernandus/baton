@@ -131,6 +131,34 @@ func containsAny(ops []string, targets ...string) bool {
 	return false
 }
 
+// PermitsEditing reports whether a tool list includes anything that changes
+// files.
+func PermitsEditing(tools []string) bool {
+	return containsAny(tools, "Edit", "Write", "MultiEdit", "NotebookEdit")
+}
+
+// PermitsExecution reports whether a tool list includes running commands.
+func PermitsExecution(tools []string) bool {
+	return containsAny(tools, "Bash")
+}
+
+// CoarseRestrictionFits reports whether a read-only session mode expresses this
+// role's boundary without exceeding it.
+//
+// A coarse mode is a single switch: agents implement it as "no edits", and in
+// practice it withholds command execution too. That suits a role which wants
+// neither. It does not suit lead or reviewer, which are read-only about files
+// but run commands to verify — asking for the mode there cost a completion
+// phase its build check and blocked the pipeline.
+//
+// A restriction broader than the role asked for is still a wrong restriction.
+func CoarseRestrictionFits(tools []string) bool {
+	if len(tools) == 0 {
+		return false
+	}
+	return !PermitsEditing(tools) && !PermitsExecution(tools)
+}
+
 func AllowedTools(roleName string) []string {
 	switch roleName {
 	case "lead":

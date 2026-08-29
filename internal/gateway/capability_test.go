@@ -56,19 +56,40 @@ func TestNoRestrictionOnReadOnlyRoleWarnsWithoutBlocking(t *testing.T) {
 	}
 }
 
-// A coarse mechanism can withhold editing, which is exactly what a read-only
-// role needs, so it is not reported.
-func TestCoarseRestrictionCoversAReadOnlyRole(t *testing.T) {
-	findings := CheckRoleCapabilities(readOnlyRole, capsLookup(transport.Caps{
+// A coarse mechanism is a single switch: no edits, and in practice no commands
+// either. test_lead permits Read, Grep and Glob and nothing else, so the switch
+// expresses its boundary exactly.
+func TestCoarseRestrictionCoversARoleThatWantsNeither(t *testing.T) {
+	findings := CheckRoleCapabilities(map[string]string{"test_lead": "mock"}, capsLookup(transport.Caps{
 		Probed: true, ToolRestriction: transport.RestrictCoarse,
 	}))
 	if len(findings) != 0 {
-		t.Errorf("findings=%v, want none: a read-only role is what coarse restriction handles", findings)
+		t.Errorf("findings=%v, want none: the switch matches this boundary exactly", findings)
 	}
 }
 
-// tester permits Edit and Write but not Grep or Glob. A coarse toggle cannot
-// express that, so the gap is reported even though some restriction exists.
+// reviewer is read-only about files but runs commands to verify. A coarse mode
+// withholds both, so applying it exceeds the boundary — asking for it cost a
+// completion phase its build check and blocked a pipeline. The transport
+// declines to apply it there, so the gap is reported.
+func TestCoarseRestrictionDoesNotFitARoleThatRunsCommands(t *testing.T) {
+	findings := CheckRoleCapabilities(readOnlyRole, capsLookup(transport.Caps{
+		Probed: true, ToolRestriction: transport.RestrictCoarse,
+	}))
+	f, ok := findingFor(t, findings, "reviewer")
+	if !ok {
+		t.Fatalf("findings=%v, want one naming reviewer", findings)
+	}
+	if f.Severity != SeverityWarn {
+		t.Errorf("severity=%v, want warn", f.Severity)
+	}
+	if !strings.Contains(f.Message, "does not fit") {
+		t.Errorf("message=%q, want it to say the mechanism does not fit", f.Message)
+	}
+}
+
+// tester permits Edit, Write and Bash. A coarse toggle cannot express that
+// either, so the gap is reported even though some restriction exists.
 func TestCoarseRestrictionCannotExpressAMixedBoundary(t *testing.T) {
 	findings := CheckRoleCapabilities(map[string]string{"tester": "mock"}, capsLookup(transport.Caps{
 		Probed: true, ToolRestriction: transport.RestrictCoarse,

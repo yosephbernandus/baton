@@ -13,6 +13,7 @@ import (
 	"github.com/yosephbernandus/baton/internal/config"
 	gitpkg "github.com/yosephbernandus/baton/internal/git"
 	"github.com/yosephbernandus/baton/internal/proto"
+	"github.com/yosephbernandus/baton/internal/role"
 	"github.com/yosephbernandus/baton/internal/transport"
 )
 
@@ -384,7 +385,10 @@ func (t *Transport) handshake(
 		}
 	}
 
-	if len(req.AllowedTools) > 0 && !allowsEditing(req.AllowedTools) {
+	// Only when a coarse mode expresses the boundary without exceeding it. lead
+	// and reviewer are read-only about files but run commands to verify, and a
+	// plan mode withholds both.
+	if role.CoarseRestrictionFits(req.AllowedTools) {
 		if err := t.selectReadOnlyMode(ctx, conn, sess.sessionID, modeOpt, hasModeOpt, newResp.Modes); err != nil {
 			t.log("acp: %v", err)
 		}
@@ -500,18 +504,6 @@ func (t *Transport) failure(
 		Duration:     time.Since(start),
 		ErrorDetail:  detail,
 	}, nil
-}
-
-// allowsEditing reports whether a role's tool list includes any tool that can
-// change files.
-func allowsEditing(tools []string) bool {
-	for _, t := range tools {
-		switch t {
-		case "Edit", "Write", "MultiEdit", "NotebookEdit":
-			return true
-		}
-	}
-	return false
 }
 
 func findOption(opts []configOption, id string) (configOption, bool) {
